@@ -8,6 +8,25 @@ from telegram.constants import ParseMode
 from sanitizer import DataSanitizer
 from brain import SentinelBrain
 from sheets_connector import SheetsConnector
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+import time
+import socket
+
+# Servidor mínimo para pasar el Health Check de Hugging Face
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Sentinel is active")
+
+def run_health_check():
+    server = HTTPServer(('0.0.0.0', 7860), HealthCheckHandler)
+    server.serve_forever()
+
+# Iniciamos el servidor en un hilo secundario
+threading.Thread(target=run_health_check, daemon=True).start()
 
 # Configuración de Logging profesional
 logging.basicConfig(
@@ -97,16 +116,38 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning(f"Error de formato Markdown, enviando como texto plano: {e}")
         await update.message.reply_text(final_response)
 
-if __name__ == '__main__':
-    if not TOKEN:
-        logger.error("No se encontró TELEGRAM_TOKEN. Revisa tu archivo .env")
-        exit(1)
+def check_network():
+    """Espera hasta que api.telegram.org sea alcanzable"""
+    logger.info("🌐 Comprobando conexión a internet...")
+    while True:
+        try:
+            # Intentamos resolver el dominio de Telegram
+            socket.gethostbyname('api.telegram.org')
+            logger.info("✅ Red lista. Conectando con Telegram...")
+            return True
+        except socket.gaierror:
+            logger.warning("⏳ Esperando a que el DNS de Hugging Face despierte...")
+            time.sleep(5)
 
-    app = ApplicationBuilder().token(TOKEN).build()
+if __name__ == "__main__":
+    # 1. Esperamos a que la red sea real
+    check_network()
     
-    # Handlers
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
-    
-    print("🚀 Sentinel Operativo. Escuchando Telegram...")
-    app.run_polling()
+    # 2. Arrancamos el servidor de salud (Hugging Face)
+    threading.Thread(target=run_health_check, daemon=True).start()
+
+    # 3. Configuramos el bot con tiempos de espera más largos
+    # Esto evita que se rinda si la conexión es inestable al inicio
+    try:
+        logger.info("🚀 Sentinel Operativo. Escuchando Telegram...")
+        app.run_polling(
+            connect_timeout=60,
+            read_timeout=60,
+            write_timeout=60,
+            pool_timeout=60,
+            drop_pending_updates=True
+        )
+    except Exception as e:
+        logger.error(f"💥 Error crítico en el bot: {e}")
+        # Esperamos un poco y salimos para que el contenedor se reinicie solo
+        time.sleep(10)
