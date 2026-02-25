@@ -1,0 +1,16 @@
+# Secretos y Configuración
+.env
+service_account.json
+
+# Entorno Virtual
+venv/
+env/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Documentación de OS
+.DS_Store
+Thumbs.db
