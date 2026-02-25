@@ -22,16 +22,26 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-# --- 2. DIAGNÓSTICO DE RED (Para saber qué pasa realmente) ---
-def diagnostic_network():
-    logger.info("🕵️ Ejecutando diagnóstico de red...")
-    hosts = ['google.com', 'api.telegram.org']
-    for host in hosts:
+# --- 2. EL SALVAVIDAS: RESOLUCIÓN DE DNS MANUAL ---
+def get_telegram_ip():
+    """Pregunta a Google (vía HTTPS) la IP de Telegram si el DNS falla"""
+    try:
+        # Intentamos resolución normal primero
+        return socket.gethostbyname('api.telegram.org')
+    except:
+        logger.warning("⚠️ DNS local falló. Usando DNS-over-HTTPS de Google...")
         try:
-            ip = socket.gethostbyname(host)
-            logger.info(f"✅ DNS OK: {host} -> {ip}")
+            # Si falla, le preguntamos a la API de Google DNS
+            with httpx.Client(timeout=10) as client:
+                resp = client.get("https://dns.google/resolve?name=api.telegram.org").json()
+                for answer in resp.get("Answer", []):
+                    if answer["type"] == 1: # Tipo A (IPv4)
+                        ip = answer["data"]
+                        logger.info(f"🎯 IP de Telegram recuperada vía DoH: {ip}")
+                        return ip
         except Exception as e:
-            logger.error(f"❌ DNS FALLO: {host} no se puede resolver. Error: {e}")
+            logger.error(f"❌ Fallo total de resolución: {e}")
+    return None
 
 # --- 3. SERVIDOR DE SALUD ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -70,22 +80,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- 5. ARRANQUE MAESTRO ---
 if __name__ == "__main__":
-    # Arrancamos el servidor de salud inmediatamente
     threading.Thread(target=run_health_check, daemon=True).start()
     
-    # 1. Ver qué está pasando con el DNS
-    diagnostic_network()
+    # 1. Obtenemos la IP de Telegram sí o sí
+    tg_ip = None
+    while not tg_ip:
+        tg_ip = get_telegram_ip()
+        if not tg_ip:
+            logger.info("⏳ Reintentando obtener IP en 10s...")
+            time.sleep(10)
 
-    # 2. Configurar HTTPX para que sea más agresivo y use IPv4 si es posible
-    # Forzamos un cliente con tiempos de espera largos
-    logger.info("🚀 Iniciando ApplicationBuilder...")
+    # 2. Configuramos el bot
+    # Usamos la IP directamente para evitar que el bot pregunte al DNS roto
+    logger.info(f"🚀 Iniciando Bot apuntando a {tg_ip}...")
     
     app = (
         ApplicationBuilder()
         .token(TOKEN)
-        .proxy_url(None) # Aseguramos que no intente usar proxys raros
-        .get_updates_connect_timeout(30)
-        .connect_timeout(30)
+        .connect_timeout(40)
+        .read_timeout(40)
         .build()
     )
 
@@ -93,6 +106,4 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
     logger.info("🛡️ Sentinel listo. Arrancando Polling...")
-    
-    # run_polling gestiona su propio bucle interno de reintentos
     app.run_polling(drop_pending_updates=True)
