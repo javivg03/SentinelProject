@@ -55,7 +55,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = ""
     if items != "DOUBT" and sheets and isinstance(items, list):
         for item in items:
-            sheets.log_expense(item["concept"], item["category"], item["amount"])
+            sheets.log_expense(item["concepto"], item["categoria"], item["importe"])
         status_msg = "\n\n📊 *Sincronizado con éxito.*"
     
     await update.message.reply_text(f"{analysis_text}{status_msg}", parse_mode=ParseMode.MARKDOWN)
