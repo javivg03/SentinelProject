@@ -22,26 +22,35 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-# --- 2. EL SALVAVIDAS: RESOLUCIÓN DE DNS MANUAL ---
-def get_telegram_ip():
-    """Pregunta a Google (vía HTTPS) la IP de Telegram si el DNS falla"""
+# --- 2. EL HACK DEFINITIVO: MONKEY PATCHING DEL SOCKET ---
+# Guardamos la función original de buscar direcciones
+original_getaddrinfo = socket.getaddrinfo
+
+def get_telegram_ip_doh():
+    """Consigue la IP de Telegram usando Google DNS sobre HTTPS"""
     try:
-        # Intentamos resolución normal primero
-        return socket.gethostbyname('api.telegram.org')
-    except:
-        logger.warning("⚠️ DNS local falló. Usando DNS-over-HTTPS de Google...")
-        try:
-            # Si falla, le preguntamos a la API de Google DNS
-            with httpx.Client(timeout=10) as client:
-                resp = client.get("https://dns.google/resolve?name=api.telegram.org").json()
-                for answer in resp.get("Answer", []):
-                    if answer["type"] == 1: # Tipo A (IPv4)
-                        ip = answer["data"]
-                        logger.info(f"🎯 IP de Telegram recuperada vía DoH: {ip}")
-                        return ip
-        except Exception as e:
-            logger.error(f"❌ Fallo total de resolución: {e}")
-    return None
+        with httpx.Client(timeout=10) as client:
+            resp = client.get("https://dns.google/resolve?name=api.telegram.org").json()
+            for answer in resp.get("Answer", []):
+                if answer["type"] == 1: # IPv4
+                    return answer["data"]
+    except Exception as e:
+        logger.error(f"❌ No se pudo obtener IP vía DoH: {e}")
+    return "149.154.167.220" # IP de respaldo por si Google fallara
+
+# Obtenemos la IP real
+TARGET_IP = get_telegram_ip_doh()
+logger.info(f"🎯 IP de Telegram fijada en: {TARGET_IP}")
+
+def hacked_getaddrinfo(*args):
+    """Engaña al sistema: si preguntan por Telegram, devuelve la IP fija"""
+    if args[0] == 'api.telegram.org':
+        # Devolvemos la estructura que espera Python para una conexión exitosa
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', (TARGET_IP, args[1]))]
+    return original_getaddrinfo(*args)
+
+# Inyectamos nuestro hack en el corazón de Python
+socket.getaddrinfo = hacked_getaddrinfo
 
 # --- 3. SERVIDOR DE SALUD ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -78,32 +87,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status_msg = f"\n\n📊 *Sincronizado.*"
     await update.message.reply_text(f"{analysis_text}{status_msg}", parse_mode=ParseMode.MARKDOWN)
 
-# --- 5. ARRANQUE MAESTRO ---
+# --- 5. ARRANQUE ---
 if __name__ == "__main__":
     threading.Thread(target=run_health_check, daemon=True).start()
-    
-    # 1. Obtenemos la IP de Telegram sí o sí
-    tg_ip = None
-    while not tg_ip:
-        tg_ip = get_telegram_ip()
-        if not tg_ip:
-            logger.info("⏳ Reintentando obtener IP en 10s...")
-            time.sleep(10)
-
-    # 2. Configuramos el bot
-    # Usamos la IP directamente para evitar que el bot pregunte al DNS roto
-    logger.info(f"🚀 Iniciando Bot apuntando a {tg_ip}...")
     
     app = (
         ApplicationBuilder()
         .token(TOKEN)
-        .connect_timeout(40)
-        .read_timeout(40)
+        .connect_timeout(30)
+        .read_timeout(30)
         .build()
     )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
-    logger.info("🛡️ Sentinel listo. Arrancando Polling...")
+    logger.info("🛡️ Sentinel listo (DNS Hackeado). Arrancando...")
     app.run_polling(drop_pending_updates=True)
