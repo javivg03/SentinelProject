@@ -87,35 +87,31 @@ app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
-# --- 5. COMPROBACIÓN DE RED ---
-def check_network():
-    logger.info("🌐 Comprobando conexión a internet...")
-    while True:
-        try:
-            socket.gethostbyname('api.telegram.org')
-            logger.info("✅ Red lista. Conectando con Telegram...")
-            return True
-        except socket.gaierror:
-            logger.warning("⏳ Esperando a que el DNS de Hugging Face despierte...")
-            time.sleep(5)
+# --- 4. INICIALIZACIÓN DE LA APLICACIÓN ---
+app = ApplicationBuilder().token(TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
-# --- 6. ARRANQUE PRINCIPAL ---
+# --- 5. ARRANQUE PRINCIPAL ---
 if __name__ == "__main__":
-    # Esperamos a la red
-    check_network()
-    
-    # Lanzamos el servidor web para que HF no nos mate
+    # 1. Servidor de salud para Hugging Face
     threading.Thread(target=run_health_check, daemon=True).start()
 
-    try:
-        logger.info("🚀 Sentinel Operativo. Escuchando Telegram...")
-        app.run_polling(
-            connect_timeout=60,
-            read_timeout=60,
-            write_timeout=60,
-            pool_timeout=60,
-            drop_pending_updates=True
-        )
-    except Exception as e:
-        logger.error(f"💥 Error crítico: {e}")
-        time.sleep(10) 
+    # 2. Pequeño respiro de 5 segundos para que la red se estabilice
+    logger.info("⏳ Preparando motores...")
+    time.sleep(5)
+
+    # 3. Intento de arranque con reintentos automáticos
+    while True:
+        try:
+            logger.info("🚀 Sentinel intentando conectar con Telegram...")
+            app.run_polling(
+                connect_timeout=60,
+                read_timeout=60,
+                write_timeout=60,
+                pool_timeout=60,
+                drop_pending_updates=True
+            )
+        except Exception as e:
+            logger.error(f"❌ Error de conexión: {e}. Reintentando en 10 segundos...")
+            time.sleep(10)
