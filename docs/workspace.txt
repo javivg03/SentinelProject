@@ -1,0 +1,18 @@
+SentinelProject/
+├── .env                    # (Oculto en Git) Secretos locales
+├── .env.example            # (Público en Git) Plantilla de secretos
+├── .gitignore              # (Público en Git) El guardaespaldas
+├── main.py                 # Orquestador
+├── brain.py                # IA / NLP
+├── sheets_connector.py     # Conexión Excel (Híbrida)
+├── sanitizer.py            # Seguridad de datos
+├── requirements.txt        # Librerías necesarias
+├── service_account.json    # (Oculto en Git) Llaves de Google
+├── README.md               # Portada del proyecto
+├── docs/                   # Documentación técnica
+│   ├── ARCHITECTURE.md
+│   ├── CHALLENGES.md
+│   ├── SETUP_GUIDE.md
+│   └── workspace.txt       # Tu espacio de notas personal
+└── prompts/                # Configuración de IA
+    └── system_prompt.txt

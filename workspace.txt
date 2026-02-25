@@ -1,8 +1,0 @@
-SentinelProject/
-├── .env                # Secretos (Tokens y Keys)
-├── main.py             # Lógica de Telegram (El cuerpo/Orquestador)
-├── brain.py            # Lógica de Gemini (El cerebro/IA)
-├── sanitizer.py        # Filtros de seguridad (El escudo/Privacidad)
-├── requirements.txt    # Dependencias del sistema
-└── prompts/            # Configuración de personalidad
-    └── system_prompt.txt
