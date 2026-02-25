@@ -1,39 +1,46 @@
-# 🛡️ Sentinel: Asistente Financiero Inteligente
+# 🛡️ Sentinel: AI-Powered Financial Auditor
 
-Sentinel es un bot de Telegram potenciado por Inteligencia Artificial (Google Gemini) diseñado para automatizar el registro de finanzas personales directamente en Google Sheets.
+Sentinel es un ecosistema de automatización financiera personal que integra la potencia de **Google Gemini AI** con la ubicuidad de **Telegram** y la flexibilidad de **Google Sheets**. 
 
-## 🚀 Características
+A diferencia de las aplicaciones de finanzas tradicionales, Sentinel utiliza **Procesamiento de Lenguaje Natural (NLP)** para permitir que el usuario registre sus movimientos financieros mediante lenguaje cotidiano, encargándose de la categorización, el cálculo atómico y la actualización de presupuestos anuales de forma autónoma.
 
-- **Procesamiento de Lenguaje Natural**: Envía mensajes como "15€ en gasolina y 20€ en comida" y Sentinel los entenderá.
-- **Categorización Automática**: Clasifica gastos e ingresos según un presupuesto predefinido.
-- **Integración con Google Sheets**: Actualiza celdas específicas en tiempo real mediante la API de Google.
-- **Privacidad y Seguridad**: Sanitización de datos sensibles antes de ser procesados por la IA.
-- **Soporte Multitarea**: Capacidad para procesar múltiples movimientos en un solo mensaje.
-
-## 🛠️ Tecnologías Utilizadas
-
-- **Lenguaje**: Python 3.10+
-- **IA**: Google Gemini Flash API
-- **Bot Platform**: python-telegram-bot
-- **Base de Datos/Dashboard**: Google Sheets API (gspread)
-- **Seguridad**: Regex para sanitización de datos y variables de entorno.
-
-## 📋 Estructura del Proyecto
-
-- `main.py`: Punto de entrada y orquestador del bot.
-- `brain.py`: Lógica de integración con Gemini y extracción de datos.
-- `sheets_connector.py`: Conexión y "cirugía" de celdas en Google Sheets.
-- `sanitizer.py`: Filtro de seguridad para datos sensibles.
-- `prompts/`: Instrucciones de personalidad y reglas del sistema.
-
-## 🔧 Instalación y Configuración
-
-1. Clonar el repositorio.
-2. Crear un entorno virtual: `python -m venv venv`.
-3. Instalar dependencias: `pip install -r requirements.txt`.
-4. Configurar el archivo `.env` con tus credenciales.
-5. Colocar tu `service_account.json` de Google Cloud en la raíz.
-6. Ejecutar: `python main.py`.
-s
 ---
-*Proyecto desarrollado por Javier Villaseñor García como parte de un sistema de automatización financiera personal.*
+
+## 🌟 Características Principales
+
+* **Comprensión Contextual**: Capacidad para procesar mensajes complejos como *"He cobrado la nómina y me he gastado 12€ en gasolina"* en una sola interacción.
+* **Categorización Inteligente**: Motor de IA configurado para mapear entradas de usuario contra un presupuesto estructurado preexistente sin errores de formato.
+* **Escritura Atómica en Google Sheets**: El sistema no solo anota; busca la intersección exacta entre Categoría y Mes, actualizando valores acumulados en tiempo real.
+* **Seguridad "Zero-Trust"**: Sanitización de datos sensibles antes de que la información salga del servidor local hacia las APIs de terceros.
+* **Feedback Proactivo**: Sentinel no solo registra; actúa como un auditor devolviendo consejos financieros basados en el gasto realizado.
+
+## 🛠️ Stack Tecnológico
+
+* **Core**: Python 3.10+
+* **IA**: Google Gemini Pro/Flash (NLP Engine)
+* **Interface**: Telegram Bot API (vía `python-telegram-bot`)
+* **Infraestructura Cloud**: Google Cloud Platform (Sheets & Drive APIs)
+* **Autenticación**: OAuth 2.0 con Cuentas de Servicio.
+
+## 🚀 Inicio Rápido en 3 Pasos
+
+### 1. Clonación y Dependencias
+Primero, clona el repositorio e instala las librerías necesarias:
+```bash
+git clone [https://github.com/tu_usuario/sentinel-bot.git](https://github.com/tu_usuario/sentinel-bot.git)
+cd sentinel-bot
+pip install -r requirements.txt
+```
+
+### 2. Configuración de Secretos
+* Crea un archivo `.env` en la raíz del proyecto y añade tus credenciales:
+    ```env
+    TELEGRAM_TOKEN=tu_token_aquí
+    GOOGLE_API_KEY=tu_api_key_de_gemini
+    ```
+* Coloca tu archivo `service_account.json` (obtenido de Google Cloud) en la carpeta raíz del proyecto.
+
+### 3. Ejecutar
+Una vez configurados los secretos, inicia el orquestador principal:
+```bash
+python main.py
