@@ -54,35 +54,38 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # items: Lista de movimientos O el string "DOUBT"
     analysis_text, items = brain.process_transaction(clean_text)
 
-    # 3. Gestión de la Lógica de Registro
+# 3. Gestión de la Lógica de Registro
     status_msg = ""
     
     # CASO A: La IA tiene dudas
     if items == "DOUBT":
-        status_msg = "\n\n🤔 *Necesito confirmación:* No he registrado nada para evitar errores. ¿Podrías ser más específico?"
-        logger.info("Sentinel solicitó aclaración al usuario.")
+        # DEJAMOS status_msg VACÍO. 
+        # ¿Por qué? Porque la IA ya ha escrito un mensaje de duda muy bueno (analysis_text).
+        # No hace falta que el código añada nada más.
+        status_msg = "" 
+        logger.info("Sentinel (IA) solicitó aclaración.")
 
-    # CASO B: Hay movimientos para registrar
+    # CASO B: Hay movimientos (Lista con datos)
     elif sheets and isinstance(items, list) and len(items) > 0:
         exitos = 0
         for item in items:
             try:
-                # Normalización final del importe
                 clean_amount = item["importe"].replace(',', '.')
-                
                 if sheets.log_expense(item["concepto"], item["categoria"], clean_amount):
                     exitos += 1
             except Exception as e:
-                logger.error(f"Fallo al registrar item {item}: {e}")
+                logger.error(f"Error: {e}")
 
         if exitos > 0:
-            status_msg = f"\n\n📊 *{exitos} movimiento(s) sincronizado(s) con Google Sheets.*"
-        else:
-            status_msg = "\n\n❌ *Error técnico al intentar escribir en el Excel.*"
+            # Aquí SÍ añadimos mensaje porque la IA no sabe si el Excel se guardó bien
+            status_msg = f"\n\n📊 *{exitos} movimiento(s) sincronizado(s).*"
 
-    # CASO C: No se detectó nada procesable
-    elif not items or len(items) == 0:
-        status_msg = "\n\n⚠️ *No he detectado ningún gasto o ingreso válido en tu mensaje.*"
+    # CASO C: La IA no devuelve nada (Mensajes de charla, "gracias", "olvídalo")
+    else:
+        # Si no hay items y no es una DUDA, es que es charla normal.
+        # No ponemos "⚠️ No he detectado nada" para no ser pesados.
+        status_msg = "" 
+        logger.info("Mensaje de cortesía o sin datos financieros.")
 
     # 4. Envío de Respuesta Final
     final_response = f"{analysis_text}{status_msg}"
