@@ -1,18 +1,17 @@
 import os
 import logging
-import threading  # Necesario para el servidor de salud
-from http.server import HTTPServer, BaseHTTPRequestHandler # Para que Render esté contento
-from dotenv import load_dotenv
-
-from telegram import Update
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from telegram import Update  
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.constants import ParseMode
+from dotenv import load_dotenv
 
 from sanitizer import DataSanitizer
 from brain import SentinelBrain
 from sheets_connector import SheetsConnector
 
-# --- 1. SERVIDOR DE SALUD (Lo que Render exige para no matar al bot) ---
+# --- 1. SERVIDOR DE SALUD (Render Compatibility) ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -23,12 +22,11 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
 def run_health_check():
-    # Render nos asigna un puerto en la variable PORT, si no existe usamos el 10000
     port = int(os.environ.get("PORT", 10000))
     server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
     server.serve_forever()
 
-# --- 2. CONFIGURACIÓN ---
+# --- 2. CONFIGURACIÓN Y CARGA ---
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -43,73 +41,89 @@ brain = SentinelBrain()
 
 try:
     sheets = SheetsConnector()
-    logger.info("✅ Conexión con Google Sheets establecida correctamente.")
+    logger.info("✅ Conexión con Google Sheets establecida.")
 except Exception as e:
     logger.error(f"⚠️ Google Sheets NO disponible: {e}")
     sheets = None
 
-# --- 3. TU LÓGICA ORIGINAL (Mantenida intacta) ---
+# --- 3. LÓGICA DE NEGOCIO ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🛡️ *Sentinel: Auditor Financiero Activado*\n\n"
-        "Estoy listo para procesar tus finanzas. Registraré todo automáticamente.",
+        "🛡️ *Sentinel: Auditor Financiero con Memoria Activado*\n\n"
+        "Ahora puedo recordar el contexto. Si olvidas el importe, puedes enviármelo en el siguiente mensaje.",
         parse_mode=ParseMode.MARKDOWN
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raw_text = update.message.text
-    clean_text = sanitizer.clean(raw_text)
-    analysis_text, items = brain.process_transaction(clean_text)
-
-    status_msg = ""
     
+    # Inicializar historial del usuario si no existe
+    if 'history' not in context.user_data:
+        context.user_data['history'] = []
+
+    # Sanitizar y recuperar contexto previo
+    clean_text = sanitizer.clean(raw_text)
+    history_str = "\n".join(context.user_data['history'])
+    
+    # Procesar con el motor de IA (Brain) enviando el historial
+    analysis_text, items = brain.process_transaction(clean_text, history=history_str)
+
     if items == "DOUBT":
-        status_msg = "" # La IA ya explica la duda en analysis_text
-        logger.info("Sentinel (IA) solicitó aclaración.")
+        # Guardamos en memoria para completar en el siguiente mensaje
+        context.user_data['history'].append(f"Usuario: {clean_text}")
+        # Mantenemos solo los últimos 4 mensajes para optimizar
+        context.user_data['history'] = context.user_data['history'][-4:]
+        
+        logger.info("Sentinel solicitó aclaración (Duda guardada en contexto).")
+        await update.message.reply_text(analysis_text, parse_mode=ParseMode.MARKDOWN)
+
+    elif items == "ERROR":
+        await update.message.reply_text("❌ Lo siento, he tenido un error interno procesando tus datos.")
 
     elif sheets and isinstance(items, list) and len(items) > 0:
         exitos = 0
+        response_msg = "🛡️ *Análisis de Sentinel*\n\n"
+        
         for item in items:
             try:
-                # Usamos get para evitar que el bot pete si una llave falta
-                conc = item.get("concepto") or item.get("concept")
-                cat = item.get("categoria") or item.get("category")
-                amo = str(item.get("importe") or item.get("amount")).replace(',', '.')
+                # Extracción desde el JSON estructurado de la IA
+                conc = item.get("concepto")
+                cat = item.get("categoria")
+                amo = item.get("importe")
+                insight = item.get("analisis_ia", "Gasto registrado correctamente.")
                 
-                if sheets.log_expense(conc, cat, amo):
+                if sheets.log_expense(conc, cat, str(amo)):
                     exitos += 1
+                    response_msg += f"💰 *{conc}*\n🏷️ {cat}\n📉 {amo}€\n🤖 _{insight}_\n\n"
             except Exception as e:
                 logger.error(f"Error registrando item: {e}")
 
         if exitos > 0:
-            status_msg = f"\n\n📊 *{exitos} movimiento(s) sincronizado(s).*"
+            # ¡ÉXITO! Limpiamos la memoria para evitar mezclar con futuros gastos
+            context.user_data['history'] = []
+            response_msg += f"📊 *{exitos} movimiento(s) sincronizado(s). Memoria liberada.*"
+            await update.message.reply_text(response_msg, parse_mode=ParseMode.MARKDOWN)
+        else:
+            await update.message.reply_text("No he podido sincronizar los datos con la hoja de cálculo.")
 
     else:
-        status_msg = "" 
-        logger.info("Mensaje de cortesía o sin datos.")
+        # Mensajes de cortesía o sin datos financieros detectados
+        logger.info("Mensaje sin datos financieros.")
+        await update.message.reply_text(analysis_text)
 
-    final_response = f"{analysis_text}{status_msg}"
-    
-    try:
-        await update.message.reply_text(final_response, parse_mode=ParseMode.MARKDOWN)
-    except Exception as e:
-        logger.warning(f"Error Markdown: {e}")
-        await update.message.reply_text(final_response)
-
-# --- 4. ARRANQUE HÍBRIDO ---
+# --- 4. ARRANQUE DEL SISTEMA ---
 if __name__ == '__main__':
     if not TOKEN:
         logger.error("No se encontró TELEGRAM_TOKEN.")
         exit(1)
 
-    # Lanzamos el servidor de salud en un hilo separado
-    # Esto permite que Render vea el puerto abierto mientras el bot escucha Telegram
+    # Hilo para Health Check (Render)
     threading.Thread(target=run_health_check, daemon=True).start()
 
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     
-    print("🚀 Sentinel Operativo en Cloud. Escuchando...")
+    print("🚀 Sentinel Operativo con Memoria Contextual. Escuchando...")
     app.run_polling(drop_pending_updates=True)
