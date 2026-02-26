@@ -1,13 +1,3 @@
----
-title: Sentinel Bot
-emoji: 🛡️
-colorFrom: blue
-colorTo: green
-sdk: docker
-app_port: 7860
-pinned: false
----
-
 # 🛡️ Sentinel: AI-Powered Financial Auditor
 
 Sentinel es un ecosistema de automatización financiera personal que integra la potencia de **Google Gemini AI** con la ubicuidad de **Telegram** y la flexibilidad de **Google Sheets**.
