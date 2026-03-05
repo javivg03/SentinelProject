@@ -23,6 +23,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
 def run_health_check():
+    # Render usa el puerto 10000 por defecto
     port = int(os.environ.get("PORT", 10000))
     server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
     server.serve_forever()
@@ -38,7 +39,7 @@ load_dotenv()
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 sanitizer = DataSanitizer()
 brain = SentinelBrain()
-bank = BankConnector() # Inicializamos el conector de Salt Edge
+bank = BankConnector() # Inicialización limpia de Salt Edge v6
 
 try:
     sheets = SheetsConnector()
@@ -50,7 +51,7 @@ except Exception as e:
 # --- 3. LÓGICA DE COMANDOS ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Mensaje de bienvenida y comandos disponibles."""
+    """Mensaje de bienvenida profesional."""
     await update.message.reply_text(
         "🛡️ *Sentinel: Auditor Financiero Online*\n\n"
         "Puedo registrar tus gastos de dos formas:\n"
@@ -62,19 +63,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def conectar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Genera el enlace de vinculación bancaria mediante Salt Edge v6."""
-    # Recuperamos la URL externa de Render para el retorno
-    BASE_URL = os.getenv("RENDER_EXTERNAL_URL")
+    # Limpiamos la URL de posibles espacios invisibles que causan el error 400
+    BASE_URL = os.getenv("RENDER_EXTERNAL_URL", "").strip()
     
     if not BASE_URL:
         await update.message.reply_text(
             "❌ *Error de Configuración*\n\n"
-            "No se ha detectado la variable `RENDER_EXTERNAL_URL`.\n"
-            "Asegúrate de configurarla en el panel de Render.",
+            "No se ha detectado la variable `RENDER_EXTERNAL_URL` en Render.",
             parse_mode=ParseMode.MARKDOWN
         )
         return
 
-    # Generamos la sesión de conexión (Connect Layer)
+    # Llamada al conector v6
     link = bank.create_connect_session(BASE_URL)
     
     if link:
@@ -86,9 +86,10 @@ async def conectar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.MARKDOWN
         )
     else:
+        # Si esto falla, el motivo aparecerá en los Logs de Render gracias al print en bank_connector.py
         await update.message.reply_text(
-            "❌ *Error de Conexión*\n\n"
-            "No he podido generar el enlace. Revisa tus credenciales de Salt Edge en Render."
+            "❌ *Error de Conexión (400)*\n\n"
+            "Salt Edge ha rechazado la petición. Por favor, revisa los Logs en Render para ver el detalle del error."
         )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -97,11 +98,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'history' not in context.user_data:
         context.user_data['history'] = []
 
-    # Limpiamos datos sensibles antes de enviarlos a la IA
     clean_text = sanitizer.clean(raw_text)
     history_str = "\n".join(context.user_data['history'])
     
-    # Procesamos con el cerebro (Gemini)
+    # Procesamos con la IA
     resultado, status = brain.process_transaction(clean_text, history=history_str)
 
     if status == "DOUBT":
@@ -123,7 +123,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             amo = item.get("importe")
             insight = item.get("analisis_ia", "Registrado correctamente.")
             
-            # Intento de registro en la hoja de cálculo
             if sheets and sheets.log_expense(conc, cat, str(amo)):
                 exitos += 1
                 final_response += f"💰 *{conc}*\n🏷️ {cat}\n📉 {amo}€\n🤖 _{insight}_\n\n"
@@ -143,13 +142,9 @@ if __name__ == '__main__':
         logger.error("No se encontró TELEGRAM_TOKEN en el entorno.")
         exit(1)
         
-    # Iniciamos el servidor de salud en un hilo separado
     threading.Thread(target=run_health_check, daemon=True).start()
-    
-    # Configuramos el bot de Telegram
     app = ApplicationBuilder().token(TOKEN).build()
     
-    # Registro de activadores (Handlers)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("conectar", conectar))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
