@@ -21,7 +21,6 @@ class BankConnector:
             "data": {
                 "customer_id": self.customer_id,
                 "consent": {
-                    # CAMBIO CRÍTICO: v6 usa 'accounts' y 'transactions'
                     "scopes": ["accounts", "transactions"]
                 },
                 "attempt": {
@@ -29,15 +28,45 @@ class BankConnector:
                 }
             }
         }
-        
         try:
             response = httpx.post(url, json=payload, headers=self.headers)
-            
             if response.status_code != 200:
                 print(f"❌ Detalle del error Salt Edge: {response.text}")
-            
             response.raise_for_status()
             return response.json().get("data", {}).get("connect_url")
         except Exception as e:
             print(f"❌ Error en Salt Edge v6: {e}")
             return None
+
+    def list_connections(self):
+        """Obtiene todas las conexiones bancarias del cliente."""
+        url = f"{self.base_url}/connections?customer_id={self.customer_id}"
+        try:
+            response = httpx.get(url, headers=self.headers)
+            response.raise_for_status()
+            return response.json().get("data", [])
+        except Exception as e:
+            print(f"❌ Error listando conexiones: {e}")
+            return []
+
+    def list_accounts(self, connection_id):
+        """Obtiene las cuentas de una conexión específica."""
+        url = f"{self.base_url}/accounts?connection_id={connection_id}"
+        try:
+            response = httpx.get(url, headers=self.headers)
+            response.raise_for_status()
+            return response.json().get("data", [])
+        except Exception as e:
+            print(f"❌ Error listando cuentas: {e}")
+            return []
+
+    def fetch_transactions(self, connection_id, account_id):
+        """Descarga transacciones de una cuenta."""
+        url = f"{self.base_url}/transactions?connection_id={connection_id}&account_id={account_id}"
+        try:
+            response = httpx.get(url, headers=self.headers)
+            response.raise_for_status()
+            return response.json().get("data", [])
+        except Exception as e:
+            print(f"❌ Error descargando transacciones: {e}")
+            return []
