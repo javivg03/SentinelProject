@@ -3,10 +3,10 @@ import os
 
 class BankConnector:
     def __init__(self):
-        # Cargamos credenciales desde el entorno para máxima seguridad
-        self.app_id = os.getenv("SALTEDGE_APP_ID")
-        self.secret = os.getenv("SALTEDGE_SECRET")
-        self.customer_id = os.getenv("SALTEDGE_CUSTOMER_ID")
+        # Usamos .strip() para eliminar posibles espacios invisibles en las llaves
+        self.app_id = os.getenv("SALTEDGE_APP_ID", "").strip()
+        self.secret = os.getenv("SALTEDGE_SECRET", "").strip()
+        self.customer_id = os.getenv("SALTEDGE_CUSTOMER_ID", "").strip()
         self.base_url = "https://www.saltedge.com/api/v6"
         
         self.headers = {
@@ -17,7 +17,6 @@ class BankConnector:
         }
 
     def create_connect_session(self, redirect_url):
-        """Genera la URL oficial para que el usuario vincule su banco (PSD2)."""
         url = f"{self.base_url}/connections/connect"
         payload = {
             "data": {
@@ -26,15 +25,20 @@ class BankConnector:
                     "scopes": ["account_details", "transactions_details"]
                 },
                 "attempt": {
-                    "return_to": redirect_url
+                    # Limpiamos también la URL de retorno por seguridad
+                    "return_to": redirect_url.strip() 
                 }
             }
         }
         
         try:
             response = httpx.post(url, json=payload, headers=self.headers)
+            
+            # Si algo falla, esto nos salvará la vida en los logs de Render
+            if response.status_code != 200:
+                print(f"❌ Detalle del error Salt Edge: {response.text}")
+            
             response.raise_for_status()
-            # Esta URL es la pasarela segura donde elegirás tu banco
             return response.json().get("data", {}).get("connect_url")
         except Exception as e:
             print(f"❌ Error en Salt Edge v6: {e}")
