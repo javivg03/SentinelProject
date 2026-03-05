@@ -10,8 +10,9 @@ from dotenv import load_dotenv
 from sanitizer import DataSanitizer
 from brain import SentinelBrain
 from sheets_connector import SheetsConnector
+from bank_connector import BankConnector 
 
-# --- 1. SERVIDOR DE SALUD ---
+# --- 1. SERVIDOR DE SALUD (Compatibilidad con Render) ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -26,32 +27,81 @@ def run_health_check():
     server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
     server.serve_forever()
 
-# --- 2. CONFIGURACIÓN ---
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+# --- 2. CONFIGURACIÓN E INICIALIZACIÓN ---
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 load_dotenv()
 
+TOKEN = os.getenv("TELEGRAM_TOKEN")
 sanitizer = DataSanitizer()
 brain = SentinelBrain()
+bank = BankConnector() # Inicializamos el conector de Salt Edge
+
 try:
     sheets = SheetsConnector()
+    logger.info("✅ Conexión con Google Sheets establecida.")
 except Exception as e:
-    logger.error(f"⚠️ Sheets error: {e}")
+    logger.error(f"⚠️ Google Sheets NO disponible: {e}")
     sheets = None
 
-# --- 3. LÓGICA ---
+# --- 3. LÓGICA DE COMANDOS ---
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🛡️ *Sentinel Online*")
+    """Mensaje de bienvenida y comandos disponibles."""
+    await update.message.reply_text(
+        "🛡️ *Sentinel: Auditor Financiero Online*\n\n"
+        "Puedo registrar tus gastos de dos formas:\n"
+        "1. Escríbeme un mensaje (ej: '30€ en cena con amigos').\n"
+        "2. Usa /conectar para sincronizar tu banco automáticamente.\n\n"
+        "¿Qué prefieres hacer ahora?",
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+async def conectar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Genera el enlace de vinculación bancaria mediante Salt Edge v6."""
+    # Recuperamos la URL externa de Render para el retorno
+    BASE_URL = os.getenv("RENDER_EXTERNAL_URL")
+    
+    if not BASE_URL:
+        await update.message.reply_text(
+            "❌ *Error de Configuración*\n\n"
+            "No se ha detectado la variable `RENDER_EXTERNAL_URL`.\n"
+            "Asegúrate de configurarla en el panel de Render.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+
+    # Generamos la sesión de conexión (Connect Layer)
+    link = bank.create_connect_session(BASE_URL)
+    
+    if link:
+        await update.message.reply_text(
+            "🛡️ *Sentinel: Vinculación Bancaria (PSD2)*\n\n"
+            "Haz clic en el botón para autorizar el acceso de lectura a tus movimientos. "
+            "Es un proceso cifrado y seguro bajo normativa europea:\n\n"
+            f"[🔗 Conectar mi banco de forma segura]({link})",
+            parse_mode=ParseMode.MARKDOWN
+        )
+    else:
+        await update.message.reply_text(
+            "❌ *Error de Conexión*\n\n"
+            "No he podido generar el enlace. Revisa tus credenciales de Salt Edge en Render."
+        )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Procesamiento de gastos enviados por texto plano."""
     raw_text = update.message.text
     if 'history' not in context.user_data:
         context.user_data['history'] = []
 
+    # Limpiamos datos sensibles antes de enviarlos a la IA
     clean_text = sanitizer.clean(raw_text)
     history_str = "\n".join(context.user_data['history'])
     
-    # RESULTADO es la lista (o texto de duda), STATUS es el estado
+    # Procesamos con el cerebro (Gemini)
     resultado, status = brain.process_transaction(clean_text, history=history_str)
 
     if status == "DOUBT":
@@ -73,25 +123,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             amo = item.get("importe")
             insight = item.get("analisis_ia", "Registrado correctamente.")
             
-            # Registro en Sheets
+            # Intento de registro en la hoja de cálculo
             if sheets and sheets.log_expense(conc, cat, str(amo)):
                 exitos += 1
                 final_response += f"💰 *{conc}*\n🏷️ {cat}\n📉 {amo}€\n🤖 _{insight}_\n\n"
 
         if exitos > 0:
-            context.user_data['history'] = [] # Limpiamos memoria tras el éxito
+            context.user_data['history'] = [] 
             final_response += f"📊 *{exitos} movimiento(s) sincronizado(s).*"
             await update.message.reply_text(final_response, parse_mode=ParseMode.MARKDOWN)
         else:
             await update.message.reply_text("❌ No he podido registrar los datos en la hoja.")
-
     else:
-        await update.message.reply_text("⚠️ Error procesando el mensaje.")
+        await update.message.reply_text("⚠️ No he entendido bien ese gasto. ¿Podrías repetirlo?")
 
-# --- 4. ARRANQUE ---
+# --- 4. ARRANQUE DEL SISTEMA ---
 if __name__ == '__main__':
+    if not TOKEN:
+        logger.error("No se encontró TELEGRAM_TOKEN en el entorno.")
+        exit(1)
+        
+    # Iniciamos el servidor de salud en un hilo separado
     threading.Thread(target=run_health_check, daemon=True).start()
-    app = ApplicationBuilder().token(os.getenv("TELEGRAM_TOKEN")).build()
+    
+    # Configuramos el bot de Telegram
+    app = ApplicationBuilder().token(TOKEN).build()
+    
+    # Registro de activadores (Handlers)
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("conectar", conectar))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+    
+    print("🚀 Sentinel Operativo con Salt Edge v6. Escuchando...")
     app.run_polling(drop_pending_updates=True)
