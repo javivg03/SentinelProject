@@ -3,7 +3,6 @@ import os
 
 class BankConnector:
     def __init__(self):
-        # Usamos .strip() para eliminar posibles espacios invisibles en las llaves
         self.app_id = os.getenv("SALTEDGE_APP_ID", "").strip()
         self.secret = os.getenv("SALTEDGE_SECRET", "").strip()
         self.customer_id = os.getenv("SALTEDGE_CUSTOMER_ID", "").strip()
@@ -22,11 +21,11 @@ class BankConnector:
             "data": {
                 "customer_id": self.customer_id,
                 "consent": {
-                    "scopes": ["account_details", "transactions_details"]
+                    # CAMBIO CRÍTICO: v6 usa 'accounts' y 'transactions'
+                    "scopes": ["accounts", "transactions"]
                 },
                 "attempt": {
-                    # Limpiamos también la URL de retorno por seguridad
-                    "return_to": redirect_url.strip() 
+                    "return_to": redirect_url.strip()
                 }
             }
         }
@@ -34,7 +33,6 @@ class BankConnector:
         try:
             response = httpx.post(url, json=payload, headers=self.headers)
             
-            # Si algo falla, esto nos salvará la vida en los logs de Render
             if response.status_code != 200:
                 print(f"❌ Detalle del error Salt Edge: {response.text}")
             
