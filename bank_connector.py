@@ -3,70 +3,32 @@ import os
 
 class BankConnector:
     def __init__(self):
-        self.app_id = os.getenv("SALTEDGE_APP_ID", "").strip()
-        self.secret = os.getenv("SALTEDGE_SECRET", "").strip()
-        self.customer_id = os.getenv("SALTEDGE_CUSTOMER_ID", "").strip()
-        self.base_url = "https://www.saltedge.com/api/v6"
-        
-        self.headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "App-id": self.app_id,
-            "Secret": self.secret
-        }
+        # Usamos las nuevas variables de Tink que pusiste en Render
+        self.client_id = os.getenv("TINK_CLIENT_ID", "").strip()
+        self.client_secret = os.getenv("TINK_CLIENT_SECRET", "").strip()
+        self.base_url = "https://api.tink.com/api/v1"
+        # URL base para conectar cuentas (Tink Link)
+        self.auth_url = "https://link.tink.com/1.0/transactions/connect-accounts"
 
     def create_connect_session(self, redirect_url):
-        url = f"{self.base_url}/connections/connect"
-        payload = {
-            "data": {
-                "customer_id": self.customer_id,
-                "consent": {
-                    "scopes": ["accounts", "transactions"]
-                },
-                "attempt": {
-                    "return_to": redirect_url.strip()
-                }
-            }
+        """Genera el enlace de Tink Link para conectar bancos reales."""
+        # Tink no necesita crear una sesión previa por API como Salt Edge,
+        # se puede generar la URL directamente con tus parámetros.
+        params = {
+            "client_id": self.client_id,
+            "redirect_uri": f"{redirect_url}/callback",
+            "market": "ES",
+            "locale": "es_ES",
+            "test": "true" # Mantenlo en 'true' para probar bancos fake de Tink primero
         }
-        try:
-            response = httpx.post(url, json=payload, headers=self.headers)
-            if response.status_code != 200:
-                print(f"❌ Detalle del error Salt Edge: {response.text}")
-            response.raise_for_status()
-            return response.json().get("data", {}).get("connect_url")
-        except Exception as e:
-            print(f"❌ Error en Salt Edge v6: {e}")
-            return None
+        # Construimos la URL de conexión
+        query = "&".join([f"{k}={v}" for k, v in params.items()])
+        return f"{self.auth_url}?{query}"
 
     def list_connections(self):
-        """Obtiene todas las conexiones bancarias del cliente."""
-        url = f"{self.base_url}/connections?customer_id={self.customer_id}"
-        try:
-            response = httpx.get(url, headers=self.headers)
-            response.raise_for_status()
-            return response.json().get("data", [])
-        except Exception as e:
-            print(f"❌ Error listando conexiones: {e}")
-            return []
-
-    def list_accounts(self, connection_id):
-        """Obtiene las cuentas de una conexión específica."""
-        url = f"{self.base_url}/accounts?connection_id={connection_id}"
-        try:
-            response = httpx.get(url, headers=self.headers)
-            response.raise_for_status()
-            return response.json().get("data", [])
-        except Exception as e:
-            print(f"❌ Error listando cuentas: {e}")
-            return []
-
-    def fetch_transactions(self, connection_id, account_id):
-        """Descarga transacciones de una cuenta."""
-        url = f"{self.base_url}/transactions?connection_id={connection_id}&account_id={account_id}"
-        try:
-            response = httpx.get(url, headers=self.headers)
-            response.raise_for_status()
-            return response.json().get("data", [])
-        except Exception as e:
-            print(f"❌ Error descargando transacciones: {e}")
-            return []
+        """
+        NOTA: En Tink el flujo es un poco distinto. 
+        Primero conectamos y luego pedimos permiso para leer.
+        De momento, con que nos genere el enlace vamos bien.
+        """
+        return []
