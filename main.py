@@ -46,7 +46,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Comandos:\n"
         "1. /conectar - Vincular banco (PSD2).\n"
         "2. /sincronizar - Descargar últimos movimientos.\n"
-        "3. /activar_asesor - Activar vigilancia proactiva de gastos.\n"
+        "3. /activar\_asesor - Activar vigilancia proactiva de gastos.\n"
         "O simplemente escríbeme: '20€ en cena'.",
         parse_mode=ParseMode.MARKDOWN
     )
@@ -82,8 +82,8 @@ async def routine_bank_check(context: ContextTypes.DEFAULT_TYPE):
             alerta, motivo = brain.evaluate_spending(txs, profile)
             
             if alerta:
-                await context.bot.send_message(chat_id, f"🚨 *Alerta Financiera de Sentinel*\n\n{motivo}", parse_mode=ParseMode.MARKDOWN)
-                # Sólo lanzamos una alerta a la vez por ejecución para no hacer spam.
+                # Usamos HTML para el motivo porque el contenido de la IA puede traer guiones bajos o asteriscos que rompan el Markdown
+                await context.bot.send_message(chat_id, f"🚨 <b>Alerta Financiera de Sentinel</b>\n\n{motivo}", parse_mode=ParseMode.HTML)
                 return
 
 async def conectar(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -134,19 +134,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if status == "DOUBT":
         context.user_data['history'].append(f"Usuario: {clean_text}")
         context.user_data['history'] = context.user_data['history'][-4:]
-        await update.message.reply_text(resultado, parse_mode=ParseMode.MARKDOWN)
+        # Enviamos como texto plano para evitar que fallos de la IA rompan el bot
+        await update.message.reply_text(resultado)
 
     elif status == "SUCCESS":
-        final_response = "🛡️ *Análisis de Sentinel*\n\n"
+        final_response = "🛡️ <b>Análisis de Sentinel</b>\n\n"
         registrados = 0
         for item in resultado:
             if sheets and sheets.log_expense(item['concepto'], item['categoria'], str(item['importe'])):
                 registrados += 1
-                final_response += f"💰 *{item['concepto']}*\n🏷️ {item['categoria']}\n📉 {item['importe']}€\n\n"
+                final_response += f"💰 <b>{item['concepto']}</b>\n🏷️ {item['categoria']}\n📉 {item['importe']}€\n\n"
         
         if registrados > 0:
             context.user_data['history'] = [] 
-            await update.message.reply_text(final_response + "✅ Registrado.", parse_mode=ParseMode.MARKDOWN)
+            await update.message.reply_text(final_response + "✅ Registrado.", parse_mode=ParseMode.HTML)
 
 # --- 4. ARRANQUE ---
 if __name__ == '__main__':
