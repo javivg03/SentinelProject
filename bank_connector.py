@@ -47,6 +47,12 @@ class BankConnector:
             access_token = tokens.get('access_token')
             refresh_token = tokens.get('refresh_token')
             
+            if not refresh_token:
+                # Significa que OAuth funcionó pero Tink se negó a darnos acceso permanente
+                error_msg = f"No se recibió Refresh Token. Respuesta de Tink: {tokens}"
+                print(f"❌ {error_msg}")
+                return None, error_msg
+            
             self.access_token = access_token
             self.refresh_token = refresh_token
             print(f"✅ [Tink] Token canjeado exitosamente.")
