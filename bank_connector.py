@@ -20,6 +20,7 @@ class BankConnector:
             "redirect_uri": f"{redirect_url}/callback",
             "market": "ES",
             "locale": "es_ES",
+            "scope": "accounts:read,transactions:read",
             "test": "true" # Mantener a 'true' para fase inicial de pruebas en Tink
         }
         query = "&".join([f"{k}={v}" for k, v in params.items()])

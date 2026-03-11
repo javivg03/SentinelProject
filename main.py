@@ -203,25 +203,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(final_response + "✅ Registrado.", parse_mode=ParseMode.HTML)
 
 # --- 4. ARRANQUE ---
-async def start_services():
+async def start_services(app):
     global global_bank, global_persistence
     
     # Inicializando PicklePersistence para manejo de estado persistente
     persistence = PicklePersistence(filepath="sentinel_data.pickle")
     global_persistence = persistence
     
-    app = ApplicationBuilder().token(TOKEN).persistence(persistence).build()
-    
     # Asignamos el bank_connector actual y guardamos referencia global
     global_bank = bank
     
     # Recargamos el token si ya fue guardado en alguna sesión previa
-    bot_data = persistence.get_bot_data()
+    bot_data = await persistence.get_bot_data()
     if bot_data and 'tink_refresh_token' in bot_data:
         saved_token = bot_data['tink_refresh_token']
         global_bank.access_token = saved_token
         print(f"🔑 [Tink] Token de acceso recuperado de la base de datos local.")
         
+    app.persistence = persistence
+    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("conectar", conectar))
     app.add_handler(CommandHandler("sincronizar", sincronizar))
@@ -230,19 +230,17 @@ async def start_services():
     
     # Iniciar servidor aiohttp en background como una Task de asyncio
     asyncio.create_task(run_web_server())
-    
     print("🚀 Sentinel iniciado correctamente con JobQueue y Servidor Web.")
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
-    # Lanzar el bucle principal asyncio
-    loop = asyncio.get_event_loop()
+    # Usamos la gestión de ciclo de vida nativo de PTB (Python Telegram Bot) 20+
+    # que cierra automáticamente el event loop al pulsar CTRL+C
+    app = ApplicationBuilder().token(TOKEN).build()
+    
+    # Enganchamos nuestra inicialización y el mini-servidor web a la fase de arranque (Post-Init)
+    app.post_init = start_services
+    
     try:
-        loop.run_until_complete(start_services())
-        loop.run_forever()
+        app.run_polling(drop_pending_updates=True)
     except KeyboardInterrupt:
         pass
-    finally:
-        loop.close()
