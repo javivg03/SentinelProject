@@ -17,3 +17,7 @@ Thumbs.db
 
 # Otra documentacion
 gemp_prompt.md
+docs/gem_prompt.md
+
+# Persistencia Telegram
+*.pickle

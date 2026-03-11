@@ -3,7 +3,7 @@ import logging
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, PicklePersistence
 from telegram.constants import ParseMode
 from dotenv import load_dotenv
 
@@ -115,7 +115,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- 4. ARRANQUE ---
 if __name__ == '__main__':
     threading.Thread(target=run_health_check, daemon=True).start()
-    app = ApplicationBuilder().token(TOKEN).build()
+    
+    # Inicializando PicklePersistence para manejo de estado (dudas) persistente entre reinicios
+    persistence = PicklePersistence(filepath="sentinel_data.pickle")
+    
+    app = ApplicationBuilder().token(TOKEN).persistence(persistence).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("conectar", conectar))
     app.add_handler(CommandHandler("sincronizar", sincronizar))

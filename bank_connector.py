@@ -27,8 +27,26 @@ class BankConnector:
 
     def list_connections(self):
         """
-        NOTA: En Tink el flujo es un poco distinto. 
-        Primero conectamos y luego pedimos permiso para leer.
-        De momento, con que nos genere el enlace vamos bien.
+        MOCK DATA: Simulamos una conexión activa para evitar consumir la API real.
         """
-        return []
+        print("🔗 [MOCK] Solicitando conexiones activas...")
+        return [{"id": "conn_mock_123", "status": "ACTIVE"}]
+
+    def list_accounts(self, connection_id):
+        """
+        MOCK DATA: Simulamos cuentas bancarias.
+        """
+        print(f"🏦 [MOCK] Solicitando cuentas para la conexión {connection_id}...")
+        return [{"id": "acc_mock_456", "name": "Cuenta Corriente Personal", "balance": 1500.50}]
+
+    def fetch_transactions(self, connection_id, account_id):
+        """
+        MOCK DATA: Simulamos descargas de transacciones. 
+        Esto servirá en el futuro para eventos Proactivos (Notificar de gastos en Ocio).
+        """
+        print(f"💸 [MOCK] Descargando transacciones de cuenta {account_id}...")
+        return [
+            {"amount": -50.0, "currency_code": "EUR", "description": "Compra Mercadona"},
+            {"amount": -15.5, "currency_code": "EUR", "description": "UBER EATS"},
+            {"amount": -120.0, "currency_code": "EUR", "description": "ZARA OCIO"}
+        ]

@@ -43,7 +43,11 @@ class SheetsConnector:
             # Enero es Col B (2), Febrero Col C (3), etc.
             self.month_columns = {m: m + 1 for m in range(1, 13)}
             
-            print(f"✅ Conexión establecida con la hoja: '{self.spreadsheet.title}'")
+            # 5. Mapeo de Categorías en Local O(1) para evitar iteración constante
+            categories = self.sheet.col_values(1)
+            self.category_map = {val.strip().lower(): i + 1 for i, val in enumerate(categories) if val.strip()}
+            
+            print(f"✅ Conexión establecida con la hoja: '{self.spreadsheet.title}'. Categorías cacheadas: {len(self.category_map)}")
 
         except Exception as e:
             print(f"❌ Error crítico en SheetsConnector: {e}")
@@ -67,16 +71,9 @@ class SheetsConnector:
             now = datetime.datetime.now()
             col = self.month_columns.get(now.month)
             
-            # 1. Búsqueda de Categoría en Columna A
-            # Obtenemos todos los valores de la columna 1 para buscar localmente (más rápido)
-            categories = self.sheet.col_values(1)
-            target_row = -1
+            # 1. Búsqueda de Categoría O(1) desde el caché local
             clean_category = category.strip().lower()
-            
-            for i, val in enumerate(categories):
-                if val.strip().lower() == clean_category:
-                    target_row = i + 1
-                    break
+            target_row = self.category_map.get(clean_category, -1)
             
             if target_row == -1:
                 print(f"⚠️ Categoría '{category}' no encontrada. Abortando registro.")
