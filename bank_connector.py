@@ -18,7 +18,7 @@ class BankConnector:
         params = {
             "client_id": self.client_id,
             "redirect_uri": f"{redirect_url}/callback",
-            "market": "ES",
+            "market": "GB", # Gran Bretaña suele tener el Demo Bank totalmente integrado
             "locale": "es_ES",
             "scope": "accounts:read,transactions:read",
             "test": "true" # Mantener a 'true' para fase inicial de pruebas en Tink
