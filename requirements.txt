@@ -9,3 +9,6 @@ httpx
 google-generativeai
 tenacity
 pytest
+pandas
+openpyxl
+aiohttp
