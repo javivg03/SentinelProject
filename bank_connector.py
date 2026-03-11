@@ -13,16 +13,68 @@ class BankConnector:
         self.access_token = None
         self.refresh_token = None
 
+    def _get_user_delegation_code(self):
+        """Crea un usuario persistente en Tink (o lo usa si existe) y devuelve su autorización."""
+        try:
+            # 1. Obtener Token de Cliente (maestro)
+            url_token = f"{self.base_url}/oauth/token"
+            data_token = {
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "grant_type": "client_credentials",
+                "scope": "user:create authorization:grant"
+            }
+            r_token = httpx.post(url_token, data=data_token, timeout=10.0)
+            r_token.raise_for_status()
+            client_token = r_token.json().get('access_token')
+
+            # 2. Crear o recuperar el Usuario de Sentinel
+            url_user = f"{self.base_url}/user/create"
+            headers = {"Authorization": f"Bearer {client_token}"}
+            user_data = {
+                "external_user_id": "javier_sentinel_master_user",
+                "market": "ES",
+                "locale": "es_ES"
+            }
+            r_user = httpx.post(url_user, headers=headers, json=user_data, timeout=10.0)
+            r_user.raise_for_status()
+            user_id = r_user.json().get('user_id')
+
+            # 3. Generar Authorization Code atado a este usuario
+            url_delegate = f"{self.base_url}/oauth/authorization-grant/delegate"
+            delegate_data = {
+                "user_id": user_id,
+                "id_hint": "Javier Sentinel",
+                "actor_client_id": self.client_id,
+                "scope": "accounts:read,transactions:read"
+            }
+            r_delegate = httpx.post(url_delegate, headers=headers, data=delegate_data, timeout=10.0)
+            r_delegate.raise_for_status()
+            return r_delegate.json().get('code')
+            
+        except Exception as e:
+            print(f"❌ Error generando Usuario Delegado Tink: {e}")
+            return None
+
     def create_connect_session(self, redirect_url):
         """Genera el enlace de Tink Link para conectar bancos reales."""
+        # Pre-Autorizamos a nuestro Usuario Persistente
+        auth_code = self._get_user_delegation_code()
+        
         params = {
             "client_id": self.client_id,
             "redirect_uri": f"{redirect_url}/callback",
             "market": "ES",
             "locale": "es_ES",
-            "scope": "accounts:read,transactions:read",
             "test": "true" # Mantener a 'true' para fase inicial de pruebas en Tink
         }
+        
+        # Inyectar el código delegado elimina el login anónimo, permitiendo que Tink nos de la llave Refresh
+        if auth_code:
+            params["authorization_code"] = auth_code
+        else:
+            params["scope"] = "accounts:read,transactions:read"
+            
         query = "&".join([f"{k}={v}" for k, v in params.items()])
         return f"{self.auth_url}?{query}"
 
