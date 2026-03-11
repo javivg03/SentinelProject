@@ -46,9 +46,45 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Comandos:\n"
         "1. /conectar - Vincular banco (PSD2).\n"
         "2. /sincronizar - Descargar últimos movimientos.\n"
-        "3. O simplemente escríbeme: '20€ en cena'.",
+        "3. /activar_asesor - Activar vigilancia proactiva de gastos.\n"
+        "O simplemente escríbeme: '20€ en cena'.",
         parse_mode=ParseMode.MARKDOWN
     )
+
+async def activar_asesor(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Activa el sistema de alertas proactivas usando JobQueue."""
+    chat_id = update.effective_chat.id
+    # Ejecutará routine_bank_check cada 60 segundos (para pruebas)
+    context.job_queue.run_repeating(routine_bank_check, interval=60, first=5, chat_id=chat_id)
+    await update.message.reply_text("🤖 *Asesor Proactivo Activado*\nHe calculado tus medias mensuales según tu histórico. Vigilaré tu banco en background y te alertaré si te acercas al límite.", parse_mode=ParseMode.MARKDOWN)
+
+async def routine_bank_check(context: ContextTypes.DEFAULT_TYPE):
+    """Job que se ejecuta en background sin intervención del usuario."""
+    job = context.job
+    chat_id = job.chat_id
+    
+    print("⏳ [CRON] Ejecutando rutina de vigilancia...")
+    
+    # 1. Obtener perfil dinámico de Google Sheets (Aprendizaje Continuo)
+    profile = sheets.calculate_dynamic_thresholds()
+    if not profile: return
+    
+    # 2. Obtener últimos gastos desde el banco conectado
+    connections = bank.list_connections()
+    if not connections: return
+    
+    for conn in connections:
+        accounts = bank.list_accounts(conn['id'])
+        for acc in accounts:
+            txs = bank.fetch_transactions(conn['id'], acc['id'])
+            
+            # 3. Evaluar usando la IA y el perfil matemático
+            alerta, motivo = brain.evaluate_spending(txs, profile)
+            
+            if alerta:
+                await context.bot.send_message(chat_id, f"🚨 *Alerta Financiera de Sentinel*\n\n{motivo}", parse_mode=ParseMode.MARKDOWN)
+                # Sólo lanzamos una alerta a la vez por ejecución para no hacer spam.
+                return
 
 async def conectar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     BASE_URL = os.getenv("RENDER_EXTERNAL_URL", "").strip()
@@ -123,5 +159,8 @@ if __name__ == '__main__':
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("conectar", conectar))
     app.add_handler(CommandHandler("sincronizar", sincronizar))
+    app.add_handler(CommandHandler("activar_asesor", activar_asesor))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+    
+    print("🚀 Sentinel iniciado correctamente.")
     app.run_polling(drop_pending_updates=True)

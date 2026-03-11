@@ -47,3 +47,24 @@ class SentinelBrain:
 
         except Exception as e:
             return f"Error en IA: {str(e)}", "ERROR"
+
+    def evaluate_spending(self, transactions, dynamic_profile):
+        """Analiza transacciones contra el perfil vivo del usuario para buscar gastos críticos."""
+        try:
+            prompt = f"Eres un Asesor Financiero Proactivo muy estricto y severo.\n"
+            prompt += f"Este es el perfil de gasto histórico mensual (media aritmética) de tu cliente obtenido vía Aprendizaje Continuo:\n{json.dumps(dynamic_profile, indent=2)}\n\n"
+            prompt += f"Revisa las siguientes compras que se acaban de hacer:\n{json.dumps(transactions, indent=2)}\n\n"
+            prompt += "Instrucciones críticas:\n"
+            prompt += "1. Busca si ha hecho un gasto impulsivo en sus categorías críticas (Ocio, Alcohol, Tabaco, Fiesta).\n"
+            prompt += "2. Si un solo gasto supera el 30% de su media mensual en esa categoría, emite alerta.\n"
+            prompt += "3. Responde ESTRICTAMENTE con JSON. Formato: {'alerta': true/false, 'motivo': 'Mensaje amigable pero severo del asesor con emojis.'}\n"
+            prompt += "Ejemplo si es correcto: {'alerta': false, 'motivo': ''}\n"
+            
+            response = self._call_api(prompt)
+            data = json.loads(response.text)
+            
+            return data.get("alerta", False), data.get("motivo", "")
+            
+        except Exception as e:
+            print(f"❌ Error en evaluación proactiva IA: {e}")
+            return False, ""

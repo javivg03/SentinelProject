@@ -94,3 +94,35 @@ class SheetsConnector:
         except Exception as e:
             print(f"❌ Error al registrar gasto en Sheets: {e}")
             return False
+
+    def calculate_dynamic_thresholds(self):
+        """Descarga todos los datos de la hoja y calcula la media aritmética de categorías críticas."""
+        try:
+            print("📊 [Sentient] Calculando umbrales dinámicos (Aprendizaje Continuo)...")
+            all_values = self.sheet.get_all_values()
+            
+            keywords = ['ocio', 'alcohol', 'tabaco', 'fiesta', 'restaurante']
+            results = {}
+            
+            for row in all_values:
+                if not row: continue
+                cat = str(row[0]).lower().strip()
+                if any(k in cat for k in keywords):
+                    # Filtrar sólo los valores numéricos de los meses (columnas 1 en adelante)
+                    numeric_vals = []
+                    for val in row[1:]:
+                        clean_val = self._clean_value(val)
+                        if clean_val > 0:  # Ignorar meses vacíos o con 0
+                            numeric_vals.append(clean_val)
+                            
+                    if numeric_vals:
+                        media = sum(numeric_vals) / len(numeric_vals)
+                        # Devolvemos el nombre original de la fila y su nueva media
+                        results[str(row[0])] = round(media, 2)
+                        
+            print(f"🧠 Perfiles aprendidos: {results}")
+            return results
+
+        except Exception as e:
+            print(f"❌ Error al calcular umbrales: {e}")
+            return {}
