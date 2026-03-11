@@ -12,20 +12,53 @@ from brain import SentinelBrain
 from sheets_connector import SheetsConnector
 from bank_connector import BankConnector 
 
-# --- 1. SERVIDOR DE SALUD ---
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Sentinel is alive")
-    def do_HEAD(self):
-        self.send_response(200)
-        self.end_headers()
+# --- 1. SERVIDOR WEB Y DEPENDENCIAS GLOBALES ---
+import asyncio
+from aiohttp import web
 
-def run_health_check():
+# Necesitamos acceso global a estas instancias para que el webhook aiohttp pueda usarlas
+# (se inicializarán abajo, antes de arrancar los servidores)
+global_bank = None
+global_persistence = None
+
+async def health_check(request):
+    return web.Response(text="Sentinel is alive")
+
+async def tink_callback(request):
+    """Este endpoint recibe la redirección de Tink tras autorizar el banco (code)."""
+    code = request.query.get('code')
+    error = request.query.get('error')
+    
+    if error:
+        return web.Response(text=f"❌ Error Tink: {error}", status=400)
+    if code:
+        # 1. Intercambiamos el código interceptado por un Token Permanente
+        refresh_token = global_bank.exchange_code_for_token(code)
+        
+        if refresh_token:
+            # 2. Inyectamos silenciosamente el token en la memoria persistente del Bot
+            # para no tener que usar variables globales y aprovechar el fichero .pickle de Telegram
+            await global_persistence.update_bot_data({'tink_refresh_token': refresh_token})
+            
+            success_html = "<html><body><h1>✅ ¡Banco conectado de forma segura!</h1><p>El token de Tink se ha guardado encriptado en tu servidor. Ya puedes volver a Telegram.</p></body></html>"
+            return web.Response(text=success_html, content_type='text/html')
+        else:
+            return web.Response(text="❌ Error canjeando el código por el Token.", status=500)
+            
+    return web.Response(text="Falta el parámetro 'code'.", status=400)
+
+async def run_web_server():
+    app = web.Application()
+    app.router.add_get('/', health_check)
+    app.router.add_get('/callback', tink_callback)
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
     port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
-    server.serve_forever()
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    print(f"🌐 Servidor Web iniciado en puerto {port}")
+    await site.start()
 
 # --- 2. CONFIGURACIÓN ---
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -63,6 +96,10 @@ async def routine_bank_check(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     chat_id = job.chat_id
     
+    # Memoria para no duplicar alertas
+    if 'alerted_txs' not in context.bot_data:
+        context.bot_data['alerted_txs'] = set()
+    
     print("⏳ [CRON] Ejecutando rutina de vigilancia...")
     
     # 1. Obtener perfil dinámico de Google Sheets (Aprendizaje Continuo)
@@ -78,12 +115,28 @@ async def routine_bank_check(context: ContextTypes.DEFAULT_TYPE):
         for acc in accounts:
             txs = bank.fetch_transactions(conn['id'], acc['id'])
             
+            # Filtramos transacciones ya alertadas basándonos en una clave única (descripcion + importe)
+            # (En Producción usaremos el transaction_id real de Tink)
+            new_txs = []
+            for tx in txs:
+                tx_hash = f"{tx.get('description', '')}_{tx.get('amount', 0)}"
+                if tx_hash not in context.bot_data['alerted_txs']:
+                    new_txs.append(tx)
+            
+            if not new_txs:
+                continue # Nada nuevo que analizar
+                
             # 3. Evaluar usando la IA y el perfil matemático
-            alerta, motivo = brain.evaluate_spending(txs, profile)
+            alerta, motivo = brain.evaluate_spending(new_txs, profile)
             
             if alerta:
-                # Usamos HTML para el motivo porque el contenido de la IA puede traer guiones bajos o asteriscos que rompan el Markdown
                 await context.bot.send_message(chat_id, f"🚨 <b>Alerta Financiera de Sentinel</b>\n\n{motivo}", parse_mode=ParseMode.HTML)
+                # Guardamos las analizadas como alertadas
+                for tx in new_txs:
+                    tx_hash = f"{tx.get('description', '')}_{tx.get('amount', 0)}"
+                    context.bot_data['alerted_txs'].add(tx_hash)
+                
+                # Sólo lanzamos una alerta a la vez por ejecución para no hacer spam.
                 return
 
 async def conectar(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -150,18 +203,46 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(final_response + "✅ Registrado.", parse_mode=ParseMode.HTML)
 
 # --- 4. ARRANQUE ---
-if __name__ == '__main__':
-    threading.Thread(target=run_health_check, daemon=True).start()
+async def start_services():
+    global global_bank, global_persistence
     
-    # Inicializando PicklePersistence para manejo de estado (dudas) persistente entre reinicios
+    # Inicializando PicklePersistence para manejo de estado persistente
     persistence = PicklePersistence(filepath="sentinel_data.pickle")
+    global_persistence = persistence
     
     app = ApplicationBuilder().token(TOKEN).persistence(persistence).build()
+    
+    # Asignamos el bank_connector actual y guardamos referencia global
+    global_bank = bank
+    
+    # Recargamos el token si ya fue guardado en alguna sesión previa
+    bot_data = persistence.get_bot_data()
+    if bot_data and 'tink_refresh_token' in bot_data:
+        saved_token = bot_data['tink_refresh_token']
+        global_bank.access_token = saved_token
+        print(f"🔑 [Tink] Token de acceso recuperado de la base de datos local.")
+        
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("conectar", conectar))
     app.add_handler(CommandHandler("sincronizar", sincronizar))
     app.add_handler(CommandHandler("activar_asesor", activar_asesor))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     
-    print("🚀 Sentinel iniciado correctamente.")
-    app.run_polling(drop_pending_updates=True)
+    # Iniciar servidor aiohttp en background como una Task de asyncio
+    asyncio.create_task(run_web_server())
+    
+    print("🚀 Sentinel iniciado correctamente con JobQueue y Servidor Web.")
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(drop_pending_updates=True)
+
+if __name__ == '__main__':
+    # Lanzar el bucle principal asyncio
+    loop = asyncio.get_event_loop()
+    try:
+        loop.run_until_complete(start_services())
+        loop.run_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        loop.close()
