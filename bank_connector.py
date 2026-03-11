@@ -28,7 +28,7 @@ class BankConnector:
             r_token.raise_for_status()
             client_token = r_token.json().get('access_token')
 
-            # 2. Crear o recuperar el Usuario de Sentinel
+            # 2. Crear el Usuario de Sentinel (si ya existe, Tink devuelve 409, lo ignoramos)
             url_user = f"{self.base_url}/user/create"
             headers = {"Authorization": f"Bearer {client_token}"}
             user_data = {
@@ -37,14 +37,14 @@ class BankConnector:
                 "locale": "es_ES"
             }
             r_user = httpx.post(url_user, headers=headers, json=user_data, timeout=10.0)
-            r_user.raise_for_status()
-            user_id = r_user.json().get('user_id')
+            if r_user.status_code != 409:
+                r_user.raise_for_status()
 
-            # 3. Generar Authorization Code atado a este usuario
+            # 3. Generar Authorization Code atado a este usuario via su ID Externo
             url_delegate = f"{self.base_url}/oauth/authorization-grant/delegate"
             delegate_data = {
-                "user_id": user_id,
-                "id_hint": "Javier Sentinel",
+                "external_user_id": "javier_sentinel_master_user",
+                "id_hint": "javiersentinel",
                 "actor_client_id": self.client_id,
                 "scope": "accounts:read,transactions:read"
             }
