@@ -33,7 +33,7 @@ async def tink_callback(request):
         return web.Response(text=f"❌ Error Tink: {error}", status=400)
     if code:
         # 1. Intercambiamos el código interceptado por un Token Permanente
-        refresh_token = global_bank.exchange_code_for_token(code)
+        refresh_token, error_msg = global_bank.exchange_code_for_token(code)
         
         if refresh_token:
             # 2. Inyectamos silenciosamente el token en la memoria persistente del Bot
@@ -43,7 +43,7 @@ async def tink_callback(request):
             success_html = "<html><body><h1>✅ ¡Banco conectado de forma segura!</h1><p>El token de Tink se ha guardado encriptado en tu servidor. Ya puedes volver a Telegram.</p></body></html>"
             return web.Response(text=success_html, content_type='text/html')
         else:
-            return web.Response(text="❌ Error canjeando el código por el Token.", status=500)
+            return web.Response(text=f"❌ Error canjeando el código por el Token: {error_msg}", status=500)
             
     return web.Response(text="Falta el parámetro 'code'.", status=400)
 

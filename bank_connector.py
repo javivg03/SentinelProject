@@ -41,26 +41,26 @@ class BankConnector:
             
             # Petición HTTP síncrona real a Tink Web API
             response = httpx.post(url, data=data, headers=headers, timeout=10.0)
-            response.raise_for_status()
+            response.raise_for_status() # Lanza excepción si hay error 4XX o 5XX
             
             tokens = response.json()
-            # El Refresh Token es el valioso, el que permite conexiones permanentes sin preguntar al usuario
             access_token = tokens.get('access_token')
             refresh_token = tokens.get('refresh_token')
             
             self.access_token = access_token
-            # Guardamos también internamente el refresh token para autorrenovaciones
             self.refresh_token = refresh_token
             print(f"✅ [Tink] Token canjeado exitosamente.")
             
-            return refresh_token
+            return refresh_token, None
             
         except httpx.HTTPStatusError as e:
-            print(f"❌ Autorización Tink fallida: {e.response.text}")
-            return None
+            error_msg = f"HTTP Error {e.response.status_code}: {e.response.text}"
+            print(f"❌ Autorización Tink fallida: {error_msg}")
+            return None, error_msg
         except Exception as e:
-            print(f"❌ Error interno Tink Auth: {e}")
-            return None
+            error_msg = str(e)
+            print(f"❌ Error interno Tink Auth: {error_msg}")
+            return None, error_msg
 
     def refresh_access_token(self):
         """Renueva el token de acceso expirado usando el Refresh Token permanente."""
