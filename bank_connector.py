@@ -67,8 +67,7 @@ class BankConnector:
             "client_id": self.client_id,
             "redirect_uri": f"{redirect_url}/callback",
             "market": "ES",
-            "locale": "es_ES",
-            "test": "true" # Mantener a 'true' para fase inicial de pruebas en Tink
+            "locale": "es_ES"
         }
         
         # Inyectar el código delegado elimina el login anónimo, permitiendo que Tink nos de la llave Refresh
