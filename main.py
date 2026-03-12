@@ -208,6 +208,13 @@ async def sincronizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     for tx in batch:
                         if tx.get('id'):
                             context.bot_data['synced_txs'].add(tx['id'])
+                elif "429" in str(res): # Rate Limit
+                    await status_msg.edit_text("⚠️ *Sentinel Limits:* Google AI limitó las consultas gratuitas. Inténtalo de nuevo en 2 minutos.", parse_mode=ParseMode.MARKDOWN)
+                    return
+                
+                # Pausa anti-bombardeo de 5 segundos entre Lote y Lote para respetar Tiempos de Gracia de Google
+                import asyncio
+                await asyncio.sleep(5)
 
     if total_nuevas == 0:
         await status_msg.edit_text("📊 *Sincronización completa*\nNo hay movimientos bancarios nuevos.", parse_mode=ParseMode.MARKDOWN)

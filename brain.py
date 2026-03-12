@@ -13,7 +13,7 @@ class SentinelBrain:
             raise ValueError("❌ ERROR: No se encontró GOOGLE_API_KEY")
         
         genai.configure(api_key=api_key)
-        self.model_name = 'gemini-flash-latest'
+        self.model_name = 'gemini-1.5-flash'
         self.model = genai.GenerativeModel(self.model_name)
         self.system_prompt_path = os.path.join("prompts", "system_prompt.txt")
 
