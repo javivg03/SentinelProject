@@ -117,7 +117,11 @@ class BankConnector:
             
             data = response.json()
             accounts = []
-            for acc in data.get('accounts', []):
+            
+            # Tink a veces devuelve un array directo, otras envuelto. Manejamos los dos.
+            acct_list = data if isinstance(data, list) else data.get('accounts', [])
+            
+            for acc in acct_list:
                 accounts.append({
                     "id": acc.get('id'),
                     "name": acc.get('name', 'Cuenta desconocida'),
@@ -147,7 +151,10 @@ class BankConnector:
             
             data = response.json()
             transactions = []
-            for tx in data.get('transactions', []):
+            
+            txs_list = data if isinstance(data, list) else data.get('transactions', [])
+            
+            for tx in txs_list:
                 # Extraemos y purificamos la estructura compleja de Tink API
                 desc = tx.get('descriptions', {}).get('display', tx.get('descriptions', {}).get('original', 'Transacción'))
                 amount_info = tx.get('amount', {}).get('value', {})
