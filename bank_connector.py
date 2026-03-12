@@ -157,17 +157,22 @@ class BankConnector:
             for tx in txs_list:
                 # Extraemos y purificamos la estructura compleja de Tink API
                 desc = tx.get('descriptions', {}).get('display', tx.get('descriptions', {}).get('original', 'Transacción'))
-                amount_info = tx.get('amount', {}).get('value', {})
-                currency = tx.get('amount', {}).get('currencyCode', 'EUR')
+                amount_obj = tx.get('amount', {})
                 
-                # Tolerancia: Tink a veces devuelve un float directo, a veces un objeto unscaled/scale
-                if isinstance(amount_info, (int, float)):
-                    real_amount = float(amount_info)
+                # Tolerancia extrema: Tink Sandbox a veces colapsa toda la rama amount a un simple float
+                if isinstance(amount_obj, (int, float)):
+                    real_amount = float(amount_obj)
+                    currency = 'EUR' 
                 else:
-                    scale = amount_info.get('scale', 0)
-                    unscaled_value = amount_info.get('unscaledValue', 0)
-                    # En Tink el signo negativo significa Gasto
-                    real_amount = float(unscaled_value) / (10 ** scale) if scale > 0 else float(unscaled_value)
+                    currency = amount_obj.get('currencyCode', 'EUR')
+                    amount_info = amount_obj.get('value', {})
+                    
+                    if isinstance(amount_info, (int, float)):
+                        real_amount = float(amount_info)
+                    else:
+                        scale = amount_info.get('scale', 0)
+                        unscaled_value = amount_info.get('unscaledValue', 0)
+                        real_amount = float(unscaled_value) / (10 ** scale) if scale > 0 else float(unscaled_value)
                 
                 transactions.append({
                     "id": tx.get('id'),
