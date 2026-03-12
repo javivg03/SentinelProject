@@ -151,7 +151,7 @@ async def conectar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Error en la conexión. Revisa los logs.")
 
 async def sincronizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Proceso automático de descarga y análisis bancario."""
+    """Proceso automático de descarga y análisis bancario masivo."""
     status_msg = await update.message.reply_text("🔄 *Sentinel: Escaneando bancos...*", parse_mode=ParseMode.MARKDOWN)
     
     connections = bank.list_connections()
@@ -159,22 +159,60 @@ async def sincronizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text("⚠️ No hay bancos vinculados. Usa /conectar.")
         return
 
+    # 1. Memoria de Estado (Deduplicación)
+    if 'synced_txs' not in context.bot_data:
+        context.bot_data['synced_txs'] = set()
+
     exitos = 0
+    total_nuevas = 0
+    
     for conn in connections:
         accounts = bank.list_accounts(conn['id'])
         for acc in accounts:
             txs = bank.fetch_transactions(conn['id'], acc['id'])
-            for tx in txs:
-                # Transformamos el movimiento en lenguaje natural para la IA
-                prompt = f"{tx['amount']} {tx['currency_code']} en {tx['description']}"
-                res, status = brain.process_transaction(prompt)
+            
+            # 2. Filtrar ya leídas por su ID único del banco
+            new_txs = [tx for tx in txs if tx.get('id') not in context.bot_data['synced_txs']]
+            total_nuevas += len(new_txs)
+            
+            if not new_txs:
+                continue
                 
-                if status == "SUCCESS":
-                    for item in res:
-                        if sheets.log_expense(item['concepto'], item['categoria'], str(item['importe'])):
-                            exitos += 1
+            # 3. Batching (Lotes de 30 para no saturar a Gemini)
+            BATCH_SIZE = 30
+            for i in range(0, len(new_txs), BATCH_SIZE):
+                batch = new_txs[i:i+BATCH_SIZE]
+                lote_actual = (i // BATCH_SIZE) + 1
+                total_lotes = (len(new_txs) + BATCH_SIZE - 1) // BATCH_SIZE
+                
+                await status_msg.edit_text(
+                    f"🔄 *Sentinel: Procesando Lote {lote_actual}/{total_lotes} ({len(batch)} txs)...*\n\n"
+                    f"Esto tomará unos segundos usando Gemini AI.", 
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                
+                prompts_batch = []
+                for tx in batch:
+                    # Empaquetamos compacto para IA
+                    prompts_batch.append(f"Importe: {tx['amount']} {tx['currency_code']} | Concepto: {tx['description']}")
+                
+                # 4. Solicitud masiva Atómica a Gemini
+                res, status = brain.process_batch_transactions(prompts_batch)
+                
+                if status == "SUCCESS" and res:
+                    # 5. Inserción matemática masiva (1 sola escritura HTTP a Google Sheets por Lote)
+                    escritos = sheets.batch_log_expenses(res)
+                    exitos += escritos
+                    
+                    # 6. Guardar en memoria para no volver a descargar
+                    for tx in batch:
+                        if tx.get('id'):
+                            context.bot_data['synced_txs'].add(tx['id'])
 
-    await status_msg.edit_text(f"📊 *Sincronización completa*\nSe han registrado {exitos} movimientos nuevos en tu Sheets.", parse_mode=ParseMode.MARKDOWN)
+    if total_nuevas == 0:
+        await status_msg.edit_text("📊 *Sincronización completa*\nNo hay movimientos bancarios nuevos.", parse_mode=ParseMode.MARKDOWN)
+    else:
+        await status_msg.edit_text(f"📊 *Sincronización completa*\nSe han clasificado y registrado {exitos} gastos en un tiempo récord.", parse_mode=ParseMode.MARKDOWN)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Mantenemos tu lógica original de historial y dudas."""

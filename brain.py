@@ -48,6 +48,26 @@ class SentinelBrain:
         except Exception as e:
             return f"Error en IA: {str(e)}", "ERROR"
 
+    def process_batch_transactions(self, transactions_list):
+        """Procesa una lista de transacciones bancarias en un solo prompt (Batching temporal)."""
+        if not transactions_list:
+            return [], "SUCCESS"
+            
+        try:
+            instructions = self._load_system_prompt()
+            prompt = f"{instructions}\n\n--- MODO BATCH (LOTE MASIVO) ---\n"
+            prompt += "Clasifica TODA la siguiente lista de transacciones de golpe. Devuelve un JSON EXCLUYENTEMENTE respetando el formato {'movimientos': [{concepto, categoria, importe}...]} con todas procesadas.\n"
+            prompt += json.dumps(transactions_list, indent=2)
+            
+            response = self._call_api(prompt)
+            data = json.loads(response.text)
+            
+            return data.get("movimientos", []), "SUCCESS"
+            
+        except Exception as e:
+            print(f"❌ Error interno Gemini Batch: {e}")
+            return [], "ERROR"
+
     def evaluate_spending(self, transactions, dynamic_profile):
         """Analiza transacciones contra el perfil vivo del usuario para buscar gastos críticos."""
         try:

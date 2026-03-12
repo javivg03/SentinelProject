@@ -95,6 +95,59 @@ class SheetsConnector:
             print(f"❌ Error al registrar gasto en Sheets: {e}")
             return False
 
+    def batch_log_expenses(self, parsed_items):
+        """
+        Recibe una lista de movimientos procesados, los agrupa y escribe en lote en Google Sheets.
+        Minimiza drásticamente las llamadas API y optimiza el tiempo de inserción.
+        """
+        if not parsed_items: return 0
+            
+        try:
+            now = datetime.datetime.now()
+            col = self.month_columns.get(now.month)
+            
+            # 1. Agrupar importes por categoría localmente (Reducción matemática)
+            aggregated = {}
+            for item in parsed_items:
+                cat = str(item.get('categoria', '')).strip().lower()
+                amt = self._clean_value(item.get('importe', 0))
+                
+                # Si la categoría que dicta Gemini no existe, forzamos a 'otros'
+                target_cat = cat if cat in self.category_map else 'otros'
+                aggregated[target_cat] = aggregated.get(target_cat, 0.0) + amt
+                    
+            if not aggregated:
+                return 0
+                
+            # 2. Descargar toda la columna para lectura en 1 sola llamada (Lectura Masiva)
+            col_data = self.sheet.col_values(col)
+            
+            # 3. Preparar array de Celdas (Objetos Cell de gspread) para escritura masiva
+            cells_to_update = []
+            
+            for cat, amount_to_add in aggregated.items():
+                target_row = self.category_map.get(cat)
+                
+                current_val = 0.0
+                # Gspread indexa desde 1 matemáticamente pero python arrays desde 0
+                if target_row <= len(col_data):
+                    current_val = self._clean_value(col_data[target_row - 1])
+                    
+                new_total = round(current_val + amount_to_add, 2)
+                
+                cells_to_update.append(gspread.Cell(row=target_row, col=col, value=new_total))
+                print(f"📦 Lote agrupado en memoria: {cat} | {current_val}€ -> {new_total}€")
+                
+            # 4. Batch Commit final a Google Sheets (1 SOLA LLAMADA API)
+            self.sheet.update_cells(cells_to_update)
+            print(f"✅ Batch completado: {len(parsed_items)} gastos consolidados en {len(cells_to_update)} categorías.")
+            
+            return len(parsed_items)
+            
+        except Exception as e:
+            print(f"❌ Error al insertar lote en Sheets: {e}")
+            return 0
+
     def calculate_dynamic_thresholds(self):
         """Descarga todos los datos de la hoja y calcula la media aritmética de categorías críticas."""
         try:
