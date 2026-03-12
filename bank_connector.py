@@ -13,70 +13,16 @@ class BankConnector:
         self.access_token = None
         self.refresh_token = None
 
-    def _get_user_delegation_code(self):
-        """Crea un usuario persistente en Tink (o lo usa si existe) y devuelve su autorización."""
-        try:
-            import uuid
-            # 1. Obtener Token de Cliente (maestro)
-            url_token = f"{self.base_url}/oauth/token"
-            data_token = {
-                "client_id": self.client_id,
-                "client_secret": self.client_secret,
-                "grant_type": "client_credentials",
-                "scope": "user:create authorization:grant"
-            }
-            r_token = httpx.post(url_token, data=data_token, timeout=10.0)
-            r_token.raise_for_status()
-            client_token = r_token.json().get('access_token')
-
-            # 2. Crear un NUEVO Usuario de Sentinel (con UUID random para evitar colisiones 409)
-            url_user = f"{self.base_url}/user/create"
-            headers = {"Authorization": f"Bearer {client_token}"}
-            ext_id = str(uuid.uuid4())
-            user_data = {
-                "external_user_id": ext_id,
-                "market": "ES",
-                "locale": "es_ES"
-            }
-            r_user = httpx.post(url_user, headers=headers, json=user_data, timeout=10.0)
-            r_user.raise_for_status()
-            
-            # 3. Generar Authorization Code usando el ID Interno criptográfico oficial de Tink
-            internal_user_id = r_user.json().get('user_id')
-            url_delegate = f"{self.base_url}/oauth/authorization-grant/delegate"
-            delegate_data = {
-                "user_id": internal_user_id,
-                "id_hint": "Javier Sentinel",
-                # IMPORTANTE: Tink exige este ID mágico específico (Pertenece a la App Oficial "Tink Link") para delegaciones UI
-                "actor_client_id": "df05e4b379934cd09963197cc855bfe9", 
-                "scope": "authorization:grant"
-            }
-            r_delegate = httpx.post(url_delegate, headers=headers, data=delegate_data, timeout=10.0)
-            r_delegate.raise_for_status()
-            return r_delegate.json().get('code')
-            
-        except Exception as e:
-            print(f"❌ Error generando Usuario Delegado Tink: {e}")
-            return None
-
     def create_connect_session(self, redirect_url):
         """Genera el enlace de Tink Link para conectar bancos reales."""
-        # Pre-Autorizamos a nuestro Usuario Persistente
-        auth_code = self._get_user_delegation_code()
-        
         params = {
             "client_id": self.client_id,
             "redirect_uri": f"{redirect_url}/callback",
             "market": "ES",
-            "locale": "es_ES"
+            "locale": "es_ES",
+            "scope": "accounts:read,transactions:read",
+            "test": "true" 
         }
-        
-        # Inyectar el código delegado elimina el login anónimo, permitiendo que Tink nos de la llave Refresh
-        if auth_code:
-            params["authorization_code"] = auth_code
-        else:
-            params["scope"] = "accounts:read,transactions:read"
-            
         query = "&".join([f"{k}={v}" for k, v in params.items()])
         return f"{self.auth_url}?{query}"
 
@@ -102,16 +48,16 @@ class BankConnector:
             refresh_token = tokens.get('refresh_token')
             
             if not refresh_token:
-                # Significa que OAuth funcionó pero Tink se negó a darnos acceso permanente
-                error_msg = f"No se recibió Refresh Token. Respuesta de Tink: {tokens}"
-                print(f"❌ {error_msg}")
-                return None, error_msg
+                # Tolerancia: Para cuentas Test o Demostraciones, Tink Link recorta el Continuos Access.
+                # Operaremos silenciosamente pero exito con el Access Token limitado que sí otorgan.
+                print("⚠️ No hay llave 'Refresh' de Tink. Sentinel operará con el Access Token temporal.")
             
             self.access_token = access_token
             self.refresh_token = refresh_token
             print(f"✅ [Tink] Token canjeado exitosamente.")
             
-            return refresh_token, None
+            return {"access_token": access_token, "refresh_token": refresh_token}, None
+            
             
         except httpx.HTTPStatusError as e:
             error_msg = f"HTTP Error {e.response.status_code}: {e.response.text}"

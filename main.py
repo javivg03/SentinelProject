@@ -33,12 +33,15 @@ async def tink_callback(request):
         return web.Response(text=f"❌ Error Tink: {error}", status=400)
     if code:
         # 1. Intercambiamos el código interceptado por un Token Permanente
-        refresh_token, error_msg = global_bank.exchange_code_for_token(code)
+        token_data, error_msg = global_bank.exchange_code_for_token(code)
         
-        if refresh_token:
+        if token_data and token_data.get('access_token'):
             # 2. Inyectamos silenciosamente el token en la memoria persistente del Bot
             # para no tener que usar variables globales y aprovechar el fichero .pickle de Telegram
-            await global_persistence.update_bot_data({'tink_refresh_token': refresh_token})
+            await global_persistence.update_bot_data({
+                'tink_access_token': token_data.get('access_token'),
+                'tink_refresh_token': token_data.get('refresh_token')
+            })
             
             success_html = "<html><body><h1>✅ ¡Banco conectado de forma segura!</h1><p>El token de Tink se ha guardado encriptado en tu servidor. Ya puedes volver a Telegram.</p></body></html>"
             return web.Response(text=success_html, content_type='text/html')
@@ -215,10 +218,13 @@ async def start_services(app):
     
     # Recargamos el token si ya fue guardado en alguna sesión previa
     bot_data = await persistence.get_bot_data()
-    if bot_data and 'tink_refresh_token' in bot_data:
-        saved_token = bot_data['tink_refresh_token']
-        global_bank.access_token = saved_token
-        print(f"🔑 [Tink] Token de acceso recuperado de la base de datos local.")
+    if bot_data:
+        if 'tink_access_token' in bot_data:
+            global_bank.access_token = bot_data['tink_access_token']
+        if 'tink_refresh_token' in bot_data:
+            global_bank.refresh_token = bot_data['tink_refresh_token']
+            
+        print(f"🔑 [Tink] Tokens recuperados de la base de datos local.")
         
     app.persistence = persistence
     
