@@ -46,9 +46,10 @@ class BankConnector:
             url_delegate = f"{self.base_url}/oauth/authorization-grant/delegate"
             delegate_data = {
                 "user_id": internal_user_id,
-                "id_hint": "JavierSentinel",
-                "actor_client_id": self.client_id,
-                "scope": "accounts:read,transactions:read"
+                "id_hint": "Javier Sentinel",
+                # IMPORTANTE: Tink exige este ID mágico específico (Pertenece a la App Oficial "Tink Link") para delegaciones UI
+                "actor_client_id": "df05e4b379934cd09963197cc855bfe9", 
+                "scope": "authorization:grant"
             }
             r_delegate = httpx.post(url_delegate, headers=headers, data=delegate_data, timeout=10.0)
             r_delegate.raise_for_status()
