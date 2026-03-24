@@ -55,13 +55,13 @@ class SheetsConnector:
             raise e
 
     def _clean_value(self, val):
-        """Convierte valores de celda (texto/moneda) en float operable."""
+        """Convierte valores de celda (texto/moneda) en float operable absoluto."""
         if val is None or str(val).strip() == "":
             return 0.0
         try:
             # Eliminamos símbolos comunes y normalizamos decimales
             sanitized = str(val).replace('€', '').replace(' ', '').replace(',', '.').strip()
-            return float(sanitized)
+            return abs(float(sanitized))
         except ValueError:
             return 0.0
 
