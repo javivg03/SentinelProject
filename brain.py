@@ -1,6 +1,7 @@
 import os
 import json
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -12,9 +13,8 @@ class SentinelBrain:
         if not api_key:
             raise ValueError("❌ ERROR: No se encontró GOOGLE_API_KEY")
         
-        genai.configure(api_key=api_key)
-        self.model_name = 'gemini-flash-latest'
-        self.model = genai.GenerativeModel(self.model_name)
+        self.client = genai.Client(api_key=api_key)
+        self.model_name = 'gemini-2.5-flash'
         self.system_prompt_path = os.path.join("prompts", "system_prompt.txt")
 
     def _load_system_prompt(self):
@@ -26,9 +26,12 @@ class SentinelBrain:
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), reraise=True)
     def _call_api(self, prompt):
-        return self.model.generate_content(
-            prompt,
-            generation_config={"response_mime_type": "application/json"}
+        return self.client.models.generate_content(
+            model=self.model_name,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
         )
 
     def process_transaction(self, current_input, history=""):

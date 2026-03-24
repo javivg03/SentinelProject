@@ -6,7 +6,7 @@ google-auth-httplib2
 google-api-python-client
 python-dotenv
 httpx
-google-generativeai
+google-genai
 tenacity
 pytest
 pandas
