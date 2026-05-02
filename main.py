@@ -103,7 +103,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Mensaje de progreso
-    msg = await update.message.reply_text("📥 Descargando documento y extrayendo datos crudos...")
+    msg = await update.message.reply_text("📥 Descargando y procesando documento...")
     
     try:
         # Descargamos el archivo a local
@@ -111,51 +111,42 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         local_path = f"temp_{document.file_name}"
         await file_obj.download_to_drive(local_path)
         
-        # Parseamos el archivo para extraer el texto
+        # Extraemos el texto crudo del documento
         raw_text = parse_document(local_path)
+        
         # Sanitizamos datos sensibles ANTES de enviar a la IA (Zero-Trust)
+        # Esto elimina IBANs, DNIs, tarjetas y teléfonos del texto
         raw_text = sanitizer.clean(raw_text)
         
-        # Gemini Flash tiene un contexto muy amplio, pero limitamos a 15000 chars
-        # para evitar timeouts y reducir costes de tokens
+        # Limitamos a 15000 chars para robustez (Gemini Flash soporta mucho más,
+        # pero es una salvaguarda ante documentos inusualmente largos)
         if len(raw_text) > 15000:
-            raw_text = raw_text[:15000] + "\n[... documento truncado por seguridad ...]"
+            raw_text = raw_text[:15000] + "\n[... documento truncado ...]"
         
-        chars = len(raw_text)
-        
-        # DEBUG: Confirmamos extracción con preview
-        await msg.edit_text(
-            f"📄 Extracción OK ({chars} caracteres). Primeros 300 chars:\n\n"
-            f"<code>{raw_text[:300]}</code>\n\n"
-            "🧠 Enviando a Gemini...",
-            parse_mode=ParseMode.HTML
-        )
+        await msg.edit_text("🧠 Analizando transacciones con IA...")
         
         # Procesamos el texto crudo en batch
         resultado, status = brain.process_raw_document(raw_text)
         
-        # Borramos el archivo local por seguridad (Zero-Trust)
+        # Borramos el archivo local inmediatamente por seguridad (Zero-Trust)
         if os.path.exists(local_path):
             os.remove(local_path)
             
         if status == "SUCCESS" and len(resultado) > 0:
             await msg.edit_text(f"📦 Registrando {len(resultado)} movimientos en Google Sheets...")
             
-            # Mandamos el lote a Sheets (1 sola llamada API)
             total_insertados = sheets.batch_log_expenses(resultado)
             
             if total_insertados > 0:
                 await msg.edit_text(f"✅ ¡Éxito! Se han registrado {total_insertados} transacciones del extracto en tu presupuesto.")
             else:
-                await msg.edit_text("⚠️ No se ha podido registrar nada en Sheets. Revisa la consola.")
+                await msg.edit_text("⚠️ No se ha podido registrar nada en Sheets. Comprueba los logs en Render.")
         else:
-            # DEBUG: Mostramos qué devolvió Gemini exactamente
             await msg.edit_text(
-                f"⚠️ Gemini status: <b>{status}</b>\n"
-                f"Movimientos encontrados: <b>{len(resultado) if isinstance(resultado, list) else resultado}</b>\n\n"
-                "La IA no encontró movimientos procesables. Revisa el preview de arriba.",
-                parse_mode=ParseMode.HTML
+                f"⚠️ La IA no encontró transacciones de gasto procesables en el documento.\n"
+                f"Status interno: {status}. Comprueba los logs en Render para más detalle."
             )
+
             
     except Exception as e:
         await msg.edit_text(f"❌ Error técnico: <code>{str(e)}</code>", parse_mode=ParseMode.HTML)
