@@ -113,8 +113,15 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Parseamos el archivo para extraer el texto
         raw_text = parse_document(local_path)
+        chars = len(raw_text)
         
-        await msg.edit_text("🧠 Analizando transacciones masivas con IA (esto puede tardar unos segundos)...")
+        # DEBUG: Confirmamos extracción con preview
+        await msg.edit_text(
+            f"📄 Extracción OK ({chars} caracteres). Primeros 300 chars:\n\n"
+            f"<code>{raw_text[:300]}</code>\n\n"
+            "🧠 Enviando a Gemini...",
+            parse_mode=ParseMode.HTML
+        )
         
         # Procesamos el texto crudo en batch
         resultado, status = brain.process_raw_document(raw_text)
@@ -126,7 +133,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if status == "SUCCESS" and len(resultado) > 0:
             await msg.edit_text(f"📦 Registrando {len(resultado)} movimientos en Google Sheets...")
             
-            # Mandamos el lote a Sheets (1 sola llamada API para ser súper rápidos)
+            # Mandamos el lote a Sheets (1 sola llamada API)
             total_insertados = sheets.batch_log_expenses(resultado)
             
             if total_insertados > 0:
@@ -134,10 +141,16 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await msg.edit_text("⚠️ No se ha podido registrar nada en Sheets. Revisa la consola.")
         else:
-            await msg.edit_text("ℹ️ La IA no ha encontrado movimientos de gasto procesables en el documento o hubo un error.")
+            # DEBUG: Mostramos qué devolvió Gemini exactamente
+            await msg.edit_text(
+                f"⚠️ Gemini status: <b>{status}</b>\n"
+                f"Movimientos encontrados: <b>{len(resultado) if isinstance(resultado, list) else resultado}</b>\n\n"
+                "La IA no encontró movimientos procesables. Revisa el preview de arriba.",
+                parse_mode=ParseMode.HTML
+            )
             
     except Exception as e:
-        await msg.edit_text(f"❌ Ocurrió un error al procesar el archivo: {str(e)}")
+        await msg.edit_text(f"❌ Error técnico: <code>{str(e)}</code>", parse_mode=ParseMode.HTML)
         if os.path.exists(f"temp_{document.file_name}"):
             os.remove(f"temp_{document.file_name}")
 
