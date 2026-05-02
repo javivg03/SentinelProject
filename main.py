@@ -113,6 +113,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Parseamos el archivo para extraer el texto
         raw_text = parse_document(local_path)
+        # Sanitizamos datos sensibles ANTES de enviar a la IA (Zero-Trust)
+        raw_text = sanitizer.clean(raw_text)
+        
+        # Gemini Flash tiene un contexto muy amplio, pero limitamos a 15000 chars
+        # para evitar timeouts y reducir costes de tokens
+        if len(raw_text) > 15000:
+            raw_text = raw_text[:15000] + "\n[... documento truncado por seguridad ...]"
+        
         chars = len(raw_text)
         
         # DEBUG: Confirmamos extracción con preview

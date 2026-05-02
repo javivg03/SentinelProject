@@ -2,62 +2,124 @@
 
 Sentinel es un ecosistema de automatización financiera personal que integra la potencia de **Google Gemini AI** con la ubicuidad de **Telegram** y la flexibilidad de **Google Sheets**.
 
-A diferencia de las aplicaciones de finanzas tradicionales, Sentinel utiliza **Procesamiento de Lenguaje Natural (NLP)** para permitir que el usuario registre sus movimientos financieros mediante lenguaje cotidiano, encargándose de la categorización, el cálculo atómico y la actualización de presupuestos anuales de forma autónoma.
+A diferencia de las aplicaciones de finanzas tradicionales, Sentinel utiliza **Procesamiento de Lenguaje Natural (NLP)** para permitir que el usuario registre sus movimientos financieros mediante lenguaje cotidiano, y un **pipeline de ingestión de documentos** para procesar masivamente los extractos bancarios exportados desde la app del banco.
 
 ---
 
 ## 🌟 Características Principales
 
-- **Comprensión Contextual**: Capacidad para procesar mensajes complejos como _"He cobrado la nómina y me he gastado 12€ en gasolina"_ en una sola interacción.
-- **Categorización Inteligente**: Motor de IA configurado para mapear entradas de usuario contra un presupuesto estructurado preexistente sin errores de formato.
-- **Escritura Atómica en Google Sheets**: El sistema no solo anota; busca la intersección exacta entre Categoría y Mes, actualizando valores acumulados en tiempo real.
-- **Seguridad "Zero-Trust"**: Sanitización de datos sensibles antes de que la información salga del servidor local hacia las APIs de terceros.
-- **Batch Processing Bancario (Anti-PSD2)**: Capacidad para procesar de forma masiva extractos en formato Excel/CSV enviados por Telegram. Esta arquitectura permite automatizar la categorización de cientos de gastos sin depender de licencias de Open Banking que están bloqueadas para usuarios individuales por la normativa europea PSD2.
-- **Feedback Proactivo**: Sentinel no solo registra; actúa como un auditor devolviendo consejos financieros basados en el gasto realizado.
+- **Comprensión Contextual**: Procesa mensajes complejos como _"He cobrado la nómina y me he gastado 12€ en gasolina"_ en una sola interacción, manteniendo historial de conversación para completar información incompleta.
+- **Categorización Inteligente**: Motor de IA (Gemini 2.5 Flash) configurado para mapear entradas de usuario y conceptos bancarios contra un presupuesto estructurado preexistente, con reglas de inferencia explícitas.
+- **Ingestión de Documentos Bancarios (Anti-PSD2)**: El bot acepta archivos Excel (`.xls`, `.xlsx`) y PDF adjuntados directamente en Telegram. Procesa masivamente extractos de meses completos sin depender de conexiones bancarias directas bloqueadas por la normativa PSD2.
+- **Conciencia de Fechas**: Cada transacción se registra en la columna del mes que le corresponde según su fecha real, no según el mes actual.
+- **Escritura Atómica en Google Sheets**: El sistema no solo anota; busca la intersección exacta entre Categoría y Mes, acumulando valores con una sola llamada API por lote (batch writing).
+- **Seguridad "Zero-Trust"**: Sanitización de datos sensibles (IBAN, DNI, tarjetas, teléfonos) antes de que la información salga del servidor hacia las APIs de terceros. Los archivos bancarios se eliminan del disco inmediatamente tras su procesamiento.
+- **Soporte Multi-banco**: Compatible con el formato `.xls` de **Unicaja** y el PDF de **Trade Republic**. Arquitectura extensible para nuevos bancos.
+
+---
+
+## ⚠️ Contexto: Por qué no usamos Open Banking (PSD2)
+
+El proyecto comenzó con la intención de conectarse directamente a los bancos en tiempo real mediante APIs de Open Banking (Tink, GoCardless). Esta integración fue bloqueada por la **normativa europea PSD2**, que requiere una licencia AISP (Account Information Service Provider) — reservada a entidades financieras reguladas — para acceder a datos bancarios reales de terceros. El módulo `bank_connector.py` se conserva como testimonio del trabajo realizado y la comprensión de la normativa. Ver `docs/CHALLENGES.md` para el análisis técnico completo.
+
+---
 
 ## 🛠️ Stack Tecnológico
 
-- **Core**: Python 3.10+
-- **IA**: Google Gemini Pro/Flash (NLP Engine)
-- **Interface**: Telegram Bot API (vía `python-telegram-bot`)
+- **Core**: Python 3.12
+- **IA**: Google Gemini 2.5 Flash (NLP Engine)
+- **Interface**: Telegram Bot API (vía `python-telegram-bot` v20+)
 - **Infraestructura Cloud**: Google Cloud Platform (Sheets & Drive APIs)
-- **Despliegue**: Web Service en Render (24/7 Uptime)
+- **Despliegue**: Web Service en Render (24/7 Uptime, auto-deploy desde GitHub)
+- **Parsing de documentos**: `pdfplumber` (PDF), `pandas + xlrd` (Excel .xls)
 
-## 🚀 Inicio Rápido en 3 Pasos
+---
 
-### 1. Clonación y Dependencias
+## 📁 Estructura del Proyecto
 
-Primero, clona el repositorio e instala las librerías necesarias:
+```
+SentinelProject/
+├── main.py                  # Orquestador principal (Telegram bot)
+├── brain.py                 # Motor de IA (interfaz con Gemini)
+├── sheets_connector.py      # Conector de Google Sheets
+├── document_parser.py       # Extractor de Excel y PDF bancarios
+├── sanitizer.py             # Filtro de datos sensibles (Zero-Trust)
+├── bank_connector.py        # ⚠️ DEPRECATED — Registro histórico de integración PSD2
+├── requirements.txt         # Dependencias del proyecto
+├── .env                     # Secretos locales (NO subir a Git)
+├── service_account.json     # Credenciales Google (NO subir a Git)
+├── prompts/
+│   └── system_prompt.txt    # Instrucciones del sistema para Gemini AI
+└── docs/
+    ├── ARCHITECTURE.md      # Diagrama y descripción de módulos
+    ├── CHANGELOG.md         # Historial de cambios por versión
+    └── CHALLENGES.md        # Retos técnicos y cómo se resolvieron
+```
+
+---
+
+## 🚀 Inicio Rápido en 4 Pasos
+
+### 1. Clonar e instalar dependencias
 
 ```bash
-git clone [https://github.com/tu_usuario/sentinel-bot.git](https://github.com/tu_usuario/sentinel-bot.git)
-cd sentinel-bot
+git clone https://github.com/javivg03/SentinelProject.git
+cd SentinelProject
+python -m venv .venv
+.\.venv\Scripts\activate       # Windows
 pip install -r requirements.txt
 ```
 
-### 2. Configuración de Secretos
+### 2. Configurar secretos locales
 
-Crea un archivo `.env` en la raíz del proyecto (o configúralos como **Environment Variables** en el panel de Render):
+Crea un archivo `.env` en la raíz del proyecto:
 
-- **TELEGRAM_TOKEN**: Tu token de BotFather.
-- **GOOGLE_API_KEY**: Tu API Key de Google AI Studio.
-- **SPREADSHEET_ID**: El ID de tu hoja de cálculo.
-- **GOOGLE_SERVICE_ACCOUNT_JSON**: El contenido completo de tu cuenta de servicio.
-- **RENDER_EXTERNAL_URL**: La URL pública que te asigna Render (ej: `https://sentinelproject.onrender.com`).
+```env
+TELEGRAM_TOKEN=tu_token_de_botfather
+GOOGLE_API_KEY=tu_api_key_de_google_ai_studio
+SPREADSHEET_ID=el_id_de_tu_google_sheet
+```
 
-### 3. Ejecución (Local o Docker)
+Descarga tu `service_account.json` desde Google Cloud Console y colócalo en la raíz del proyecto.
 
-**Local:**
+### 3. Configurar Google Sheets
+
+Tu hoja debe tener:
+- **Hoja llamada `Presupuesto`**
+- **Fila 1**: Cabecera con los meses (`Enero`, `Febrero`, ..., `Diciembre`)
+- **Columna A**: Nombres de categorías exactos (ver `prompts/system_prompt.txt`)
+- La cuenta de servicio debe tener permisos de editor en el documento
+
+### 4. Ejecutar en local (desarrollo)
 
 ```bash
 python main.py
 ```
 
-**Docker:**
+> ⚠️ **No ejecutar en local si Render está activo.** Dos instancias del mismo bot causan `telegram.error.Conflict`.
 
-```bash
-docker build -t sentinel-bot .
-docker run sentinel-bot
-```
+---
 
-Desarrollado con 💙 como herramienta de auditoría financiera inteligente.
+## ☁️ Despliegue en Render (Producción)
+
+1. Conecta tu repositorio de GitHub a Render
+2. Crea un **Web Service** con comando de inicio: `python main.py`
+3. Añade las siguientes **Environment Variables** en el panel de Render:
+   - `TELEGRAM_TOKEN`
+   - `GOOGLE_API_KEY`
+   - `SPREADSHEET_ID`
+   - `GOOGLE_SERVICE_ACCOUNT_JSON` (contenido completo del JSON de la cuenta de servicio)
+   - `RENDER_EXTERNAL_URL` (Render la añade automáticamente)
+4. Activa **Auto-Deploy** para que cada `git push` actualice el bot automáticamente
+
+---
+
+## 📚 Documentación
+
+- [Arquitectura del Sistema](docs/ARCHITECTURE.md)
+- [Historial de Cambios](docs/CHANGELOG.md)
+- [Retos Técnicos y Soluciones](docs/CHALLENGES.md)
+
+---
+
+Desarrollado con 💙 como herramienta de auditoría financiera inteligente y proyecto de portfolio.

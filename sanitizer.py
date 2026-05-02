@@ -3,10 +3,11 @@ import re
 class DataSanitizer:
     def __init__(self):
         self.patterns = {
-            'IBAN': r'ES\d{22}',
+            'IBAN': r'[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}([A-Z0-9]?){0,16}',
             'CREDIT_CARD': r'\b(?:\d{4}[ -]?){3}\d{4}\b',
             'EMAIL': r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
-            'DNI': r'\b\d{8}[A-Za-z]\b'
+            'DNI': r'\b\d{8}[A-Za-z]\b',
+            'PHONE': r'\b(\+34|0034)?[6789]\d{8}\b'
         }
 
     def clean(self, text: str) -> str:
