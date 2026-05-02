@@ -21,7 +21,7 @@ A diferencia de las aplicaciones de finanzas tradicionales, Sentinel utiliza **P
 - **IA**: Google Gemini Pro/Flash (NLP Engine)
 - **Interface**: Telegram Bot API (vía `python-telegram-bot`)
 - **Infraestructura Cloud**: Google Cloud Platform (Sheets & Drive APIs)
-- **Despliegue**: Docker en Hugging Face Spaces (24/7 Uptime)
+- **Despliegue**: Web Service en Render (24/7 Uptime)
 
 ## 🚀 Inicio Rápido en 3 Pasos
 
@@ -37,12 +37,13 @@ pip install -r requirements.txt
 
 ### 2. Configuración de Secretos
 
-Crea un archivo `.env` en la raíz del proyecto (o añádelos como **Secrets** en Hugging Face):
+Crea un archivo `.env` en la raíz del proyecto (o configúralos como **Environment Variables** en el panel de Render):
 
 - **TELEGRAM_TOKEN**: Tu token de BotFather.
 - **GOOGLE_API_KEY**: Tu API Key de Google AI Studio.
 - **SPREADSHEET_ID**: El ID de tu hoja de cálculo.
 - **GOOGLE_SERVICE_ACCOUNT_JSON**: El contenido completo de tu cuenta de servicio.
+- **RENDER_EXTERNAL_URL**: La URL pública que te asigna Render (ej: `https://sentinelproject.onrender.com`).
 
 ### 3. Ejecución (Local o Docker)
 
