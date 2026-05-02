@@ -12,3 +12,5 @@ pytest
 pandas
 openpyxl
 aiohttp
+pdfplumber
+xlrd
