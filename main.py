@@ -155,9 +155,13 @@ async def start_services(app):
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     
-    # Iniciar servidor aiohttp en background como una Task de asyncio
-    asyncio.create_task(run_web_server())
-    print("🚀 Sentinel iniciado correctamente con JobQueue y Servidor Web.")
+    # El servidor web solo se lanza en Render (cloud). En local no hace falta y bloquearía el puerto.
+    if os.environ.get("RENDER_EXTERNAL_URL"):
+        asyncio.create_task(run_web_server())
+        print("🌐 Servidor Web de salud iniciado (modo Render).")
+    else:
+        print("💻 Modo local detectado: servidor web de salud desactivado.")
+    print("🚀 Sentinel iniciado correctamente.")
 
 if __name__ == '__main__':
     # Usamos la gestión de ciclo de vida nativo de PTB (Python Telegram Bot) 20+

@@ -65,11 +65,20 @@ class SheetsConnector:
         except ValueError:
             return 0.0
 
-    def log_expense(self, concept, category, amount):
-        """Localiza la categoría y suma el importe al mes actual."""
+    def _get_month_col(self, fecha_str=None):
+        """Devuelve el número de columna del mes. Usa fecha_str 'YYYY-MM' si se proporciona, si no el mes actual."""
+        if fecha_str:
+            try:
+                month = int(fecha_str.split('-')[1])
+                return self.month_columns.get(month)
+            except (IndexError, ValueError):
+                pass
+        return self.month_columns.get(datetime.datetime.now().month)
+
+    def log_expense(self, concept, category, amount, fecha=None):
+        """Localiza la categoría y suma el importe al mes correspondiente a la fecha."""
         try:
-            now = datetime.datetime.now()
-            col = self.month_columns.get(now.month)
+            col = self._get_month_col(fecha)
             
             # 1. Búsqueda de Categoría O(1) desde el caché local
             clean_category = category.strip().lower()
@@ -97,50 +106,52 @@ class SheetsConnector:
 
     def batch_log_expenses(self, parsed_items):
         """
-        Recibe una lista de movimientos procesados, los agrupa y escribe en lote en Google Sheets.
-        Minimiza drásticamente las llamadas API y optimiza el tiempo de inserción.
+        Recibe una lista de movimientos procesados, los agrupa POR MES y escribe en lote.
+        Minimiza drásticamente las llamadas API y respeta la fecha de cada transacción.
         """
         if not parsed_items: return 0
             
         try:
-            now = datetime.datetime.now()
-            col = self.month_columns.get(now.month)
+            # 1. Agrupar importes por (mes_col, categoría) respetando la fecha de cada item
+            aggregated = {}  # clave: (col, cat_row) -> valor acumulado
             
-            # 1. Agrupar importes por categoría localmente (Reducción matemática)
-            aggregated = {}
             for item in parsed_items:
                 cat = str(item.get('categoria', '')).strip().lower()
                 amt = self._clean_value(item.get('importe', 0))
+                fecha = item.get('fecha', None)  # formato 'YYYY-MM' o None
                 
-                # Si la categoría que dicta Gemini no existe, forzamos a 'otros'
+                col = self._get_month_col(fecha)
                 target_cat = cat if cat in self.category_map else 'otros'
-                aggregated[target_cat] = aggregated.get(target_cat, 0.0) + amt
+                target_row = self.category_map.get(target_cat)
+                
+                key = (col, target_row)
+                aggregated[key] = aggregated.get(key, 0.0) + amt
                     
             if not aggregated:
                 return 0
                 
-            # 2. Descargar toda la columna para lectura en 1 sola llamada (Lectura Masiva)
-            col_data = self.sheet.col_values(col)
+            # 2. Leer valores actuales de las columnas necesarias (1 lectura por columna única)
+            cols_needed = set(k[0] for k in aggregated.keys())
+            col_caches = {}
+            for col in cols_needed:
+                col_caches[col] = self.sheet.col_values(col)
             
-            # 3. Preparar array de Celdas (Objetos Cell de gspread) para escritura masiva
+            # 3. Preparar array de Celdas para escritura masiva
             cells_to_update = []
             
-            for cat, amount_to_add in aggregated.items():
-                target_row = self.category_map.get(cat)
-                
+            for (col, target_row), amount_to_add in aggregated.items():
+                col_data = col_caches[col]
                 current_val = 0.0
-                # Gspread indexa desde 1 matemáticamente pero python arrays desde 0
                 if target_row <= len(col_data):
                     current_val = self._clean_value(col_data[target_row - 1])
                     
                 new_total = round(current_val + amount_to_add, 2)
-                
                 cells_to_update.append(gspread.Cell(row=target_row, col=col, value=new_total))
-                print(f"📦 Lote agrupado en memoria: {cat} | {current_val}€ -> {new_total}€")
+                print(f"📦 Lote: fila {target_row} col {col} | {current_val}€ -> {new_total}€")
                 
-            # 4. Batch Commit final a Google Sheets (1 SOLA LLAMADA API)
+            # 4. Batch Commit final (1 SOLA LLAMADA API)
             self.sheet.update_cells(cells_to_update)
-            print(f"✅ Batch completado: {len(parsed_items)} gastos consolidados en {len(cells_to_update)} categorías.")
+            print(f"✅ Batch completado: {len(parsed_items)} gastos en {len(cells_to_update)} celdas.")
             
             return len(parsed_items)
             

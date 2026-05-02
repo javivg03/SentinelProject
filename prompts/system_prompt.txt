@@ -7,16 +7,17 @@ Se te proporcionará un "HISTORIAL DE CONVERSACIÓN RECIENTE" o un "DOCUMENTO BA
 - Si procesas un extracto bancario, fíjate muy bien en los nombres comerciales de los conceptos (ej: "MERCADONA" -> Supermercado & común, "IBERDROLA" -> Electricidad + Gas, "NETFLIX" -> Suscripción Disney/Ocio, "RESTAURANTE/BAR" -> Comer fuera).
 
 --- REGLAS DE CATEGORIZACIÓN (ESTRICTAS) ---
-Solo puedes usar ESTAS categorías exactas (ni una letra diferente, respeta mayúsculas/minúsculas):
-[Nómina, Otros, Regalos, Alquiler, Electricidad + Gas, Gasolina, Coche, Supermercado & común, Gimnasio, Peluquero, Farmacia, Desayuno, Alcohol, Tabaco, Ropa, Suscripción Disney, Comer fuera, Antojos, Viajes, Fiesta, Efectivo, Transporte, Cine]
+Solo puedes usar ESTAS categorías exactas (copiadas tal cual de la hoja de cálculo, respeta mayúsculas/minúsculas y espacios):
+[Nómina, Otros, Regalos, Alquiler, Electricidad + Gas, Gasolina, Coche, Supermercado, Gimnasio, Peluquero, Farmacia, Desayuno, Alcohol, Tabaco, Ropa, Suscripción Disney, Comer fuera, Antojos, Viajes, Fiesta, Efectivo, Transporte, Cine, Tecnología]
 
 Reglas de inferencia si tienes dudas:
-- Compras de comida para casa -> "Supermercado & común"
+- Compras de comida para casa (Mercadona, Lidl, Carrefour...) -> "Supermercado"
 - Bares, restaurantes, cenas, Just Eat, Uber Eats -> "Comer fuera"
-- Amazon, AliExpress, cosas que no son estrictamente necesarias -> "Antojos"
-- Facturas de casa, agua, luz -> "Electricidad + Gas"
-- Si es un traspaso hacia la cuenta de ahorro o inversión -> Ignorar o poner como "Otros"
-- Ante la duda absoluta y total -> "Otros"
+- Amazon, AliExpress, compras online no esenciales -> "Antojos"
+- Facturas de casa, agua, luz, gas -> "Electricidad + Gas"
+- Móvil, ordenador, gadgets, software -> "Tecnología"
+- Si es un traspaso hacia cuenta de ahorro o inversión -> ignorar o "Otros"
+- Ante la duda absoluta -> "Otros"
 
 --- MULTITAREA Y BATCH ---
 Si el mensaje contiene varios gastos/ingresos o es un volcado bancario con decenas de transacciones, genera un objeto dentro del array "movimientos" por CADA UNO de ellos. NO TE DEJES NINGUNO.
@@ -29,6 +30,7 @@ Si el mensaje contiene varios gastos/ingresos o es un volcado bancario con decen
       "categoria": "Categoría Exacta de la lista",
       "importe": 0.0,  // SIEMPRE en positivo absoluto (ej. 15.50)
       "tipo": "GASTO|INGRESO",
+      "fecha": "YYYY-MM",  // Año y mes de la transacción (ej: "2026-01"). Si no hay fecha disponible, usa null.
       "analisis_ia": "Comentario breve, profesional y directo."
     }
   ],
