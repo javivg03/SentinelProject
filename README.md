@@ -12,6 +12,7 @@ A diferencia de las aplicaciones de finanzas tradicionales, Sentinel utiliza **P
 - **Categorización Inteligente**: Motor de IA configurado para mapear entradas de usuario contra un presupuesto estructurado preexistente sin errores de formato.
 - **Escritura Atómica en Google Sheets**: El sistema no solo anota; busca la intersección exacta entre Categoría y Mes, actualizando valores acumulados en tiempo real.
 - **Seguridad "Zero-Trust"**: Sanitización de datos sensibles antes de que la información salga del servidor local hacia las APIs de terceros.
+- **Batch Processing Bancario (Anti-PSD2)**: Capacidad para procesar de forma masiva extractos en formato Excel/CSV enviados por Telegram. Esta arquitectura permite automatizar la categorización de cientos de gastos sin depender de licencias de Open Banking que están bloqueadas para usuarios individuales por la normativa europea PSD2.
 - **Feedback Proactivo**: Sentinel no solo registra; actúa como un auditor devolviendo consejos financieros basados en el gasto realizado.
 
 ## 🛠️ Stack Tecnológico
