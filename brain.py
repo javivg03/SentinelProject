@@ -71,6 +71,30 @@ class SentinelBrain:
             print(f"❌ Error interno Gemini Batch: {e}")
             return [], "ERROR"
 
+    def process_raw_document(self, raw_text):
+        """Procesa el texto crudo extraído de un PDF o Excel bancario para buscar transacciones."""
+        if not raw_text or len(raw_text.strip()) == 0:
+            return [], "SUCCESS"
+            
+        try:
+            instructions = self._load_system_prompt()
+            prompt = f"{instructions}\n\n--- MODO LECTOR DE DOCUMENTOS BANCARIOS ---\n"
+            prompt += "El usuario ha subido un extracto bancario en crudo (Excel o PDF). Tu objetivo es analizar todas las líneas de datos y encontrar TODAS las transacciones de GASTO.\n"
+            prompt += "Ignora los ingresos (a menos que parezcan devoluciones). Extrae el concepto y el importe exacto. "
+            prompt += "El importe de un gasto debe ser devuelto siempre como un número positivo en el JSON.\n"
+            prompt += "Devuelve un JSON EXCLUYENTEMENTE respetando el formato {'movimientos': [{concepto, categoria, importe, tipo}...]} con todas las transacciones procesadas.\n\n"
+            prompt += f"--- DATOS CRUDOS DEL BANCO ---\n{raw_text}\n"
+            
+            print(f"🧠 Enviando a Gemini documento de {len(raw_text)} caracteres...")
+            response = self._call_api(prompt)
+            data = json.loads(response.text)
+            
+            return data.get("movimientos", []), "SUCCESS"
+            
+        except Exception as e:
+            print(f"❌ Error en Gemini Document Parsing: {e}")
+            return [], "ERROR"
+
     def evaluate_spending(self, transactions, dynamic_profile):
         """Analiza transacciones contra el perfil vivo del usuario para buscar gastos críticos."""
         try:
