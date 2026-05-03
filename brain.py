@@ -79,10 +79,10 @@ class SentinelBrain:
         try:
             instructions = self._load_system_prompt()
             prompt = f"{instructions}\n\n--- MODO LECTOR DE DOCUMENTOS BANCARIOS ---\n"
-            prompt += "El usuario ha subido un extracto bancario en crudo (Excel o PDF). Tu objetivo es analizar todas las líneas de datos y encontrar TODAS las transacciones de GASTO.\n"
-            prompt += "Ignora los ingresos (a menos que parezcan devoluciones). Extrae el concepto y el importe exacto. "
-            prompt += "El importe de un gasto debe ser devuelto siempre como un número positivo en el JSON.\n"
-            prompt += "Devuelve un JSON EXCLUYENTEMENTE respetando el formato {'movimientos': [{concepto, categoria, importe, tipo}...]} con todas las transacciones procesadas.\n\n"
+            prompt += "El usuario ha subido un extracto bancario en crudo (Excel o PDF). Tu objetivo es analizar TODAS las líneas y extraer tanto GASTOS como INGRESOS reales.\n"
+            prompt += "Registra la nómina y cualquier ingreso real como tipo INGRESO con categoría 'Nómina' u 'Otros' según corresponda.\n"
+            prompt += "Sigue estrictamente las reglas del sistema sobre qué IGNORAR (pagos de tarjeta, transferencias entre cuentas propias, movimientos genéricos).\n"
+            prompt += "Devuelve un JSON EXCLUYENTEMENTE con formato {'movimientos': [{concepto, categoria, importe, tipo, fecha}...]}.\n\n"
             prompt += f"--- DATOS CRUDOS DEL BANCO ---\n{raw_text}\n"
             
             print(f"🧠 Enviando a Gemini documento de {len(raw_text)} caracteres...")

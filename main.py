@@ -8,7 +8,7 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding='utf-8')
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     CallbackQueryHandler, filters, ContextTypes, PicklePersistence
@@ -89,10 +89,10 @@ async def ask_next_pending(target, context: ContextTypes.DEFAULT_TYPE):
 
     if not pending:
         text = "✅ ¡Revisión completada! Todas las transacciones pendientes han sido procesadas."
-        if hasattr(target, 'message') and target.message:
-            await target.message.reply_text(text)
-        else:
+        if isinstance(target, CallbackQuery):
             await target.edit_message_text(text)
+        else:
+            await target.message.reply_text(text)
         return
 
     item = pending[0]
@@ -106,10 +106,12 @@ async def ask_next_pending(target, context: ContextTypes.DEFAULT_TYPE):
     )
     keyboard = build_review_keyboard()
 
-    if hasattr(target, 'message') and target.message:
-        await target.message.reply_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
-    else:
+    if isinstance(target, CallbackQuery):
+        # Editamos el mensaje existente (reemplaza el teclado anterior)
         await target.edit_message_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    else:
+        # Primera llamada: enviamos un mensaje nuevo
+        await target.message.reply_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 
 async def handle_category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -265,16 +267,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- 5. ARRANQUE ---
 async def start_services(app):
-    global global_persistence
-
-    persistence = PicklePersistence(filepath="sentinel_data.pickle")
-    global_persistence = persistence
-    app.persistence = persistence
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-    # Handler para los botones de categorización manual (debe registrarse DESPUÉS de los MessageHandlers)
+    # Handler para botones de categorización manual (registrado después de los MessageHandlers)
     app.add_handler(CallbackQueryHandler(handle_category_callback, pattern="^CAT:"))
 
     if os.environ.get("RENDER_EXTERNAL_URL"):
@@ -286,7 +282,10 @@ async def start_services(app):
 
 
 if __name__ == '__main__':
-    app = ApplicationBuilder().token(TOKEN).build()
+    # PicklePersistence debe inicializarse en ApplicationBuilder para que
+    # context.user_data persista correctamente entre handlers y reinicios
+    persistence = PicklePersistence(filepath="sentinel_data.pickle")
+    app = ApplicationBuilder().token(TOKEN).persistence(persistence).build()
     app.post_init = start_services
 
     try:
