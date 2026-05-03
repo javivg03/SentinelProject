@@ -167,6 +167,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif status == "SUCCESS":
         final_response = "🛡️ <b>Análisis de Sentinel</b>\n\n"
         registrados = 0
+        fallidos = 0
         for item in resultado:
             if sheets and sheets.log_expense(item['concepto'], item['categoria'], str(item['importe'])):
                 registrados += 1
@@ -175,10 +176,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"🏷️ {item['categoria']}\n"
                     f"📉 {item['importe']}€\n\n"
                 )
+            else:
+                fallidos += 1
+                final_response += (
+                    f"❌ <b>Fallo al registrar:</b> {item['concepto']}\n"
+                    f"🏷️ {item['categoria']} (Categoría no encontrada o error de Sheets)\n"
+                    f"📉 {item['importe']}€\n\n"
+                )
 
-        if registrados > 0:
-            context.user_data['history'] = []
-            await update.message.reply_text(final_response + "✅ Registrado.", parse_mode=ParseMode.HTML)
+        context.user_data['history'] = []
+        if registrados > 0 and fallidos == 0:
+            await update.message.reply_text(final_response + "✅ Todo registrado correctamente.", parse_mode=ParseMode.HTML)
+        elif registrados > 0 and fallidos > 0:
+            await update.message.reply_text(final_response + "⚠️ Registrado parcialmente. Revisa los errores.", parse_mode=ParseMode.HTML)
+        else:
+            await update.message.reply_text(final_response + "❌ No se pudo registrar ningún movimiento.", parse_mode=ParseMode.HTML)
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
