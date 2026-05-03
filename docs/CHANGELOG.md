@@ -5,6 +5,26 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.4.0] — 2026-05-03
+
+### ✨ Añadido
+- **Sistema de revisión manual interactiva**: Las transacciones que Gemini categoriza como "Otros" con importe >5€ ya no se registran automáticamente. En su lugar, se encolan y el bot pregunta al usuario de una en una con un **teclado inline de categorías** (botones en Telegram). El usuario selecciona la categoría correcta o elige ignorarla.
+- **`CallbackQueryHandler`**: Nuevo handler `handle_category_callback` que procesa la selección de botón, escribe el gasto en Sheets con la categoría elegida por el usuario y pasa a la siguiente transacción pendiente.
+- **Cola persistente de revisión**: Las transacciones pendientes se almacenan en `context.user_data['pending_review']` mediante `PicklePersistence`, sobreviviendo reinicios del bot.
+- **Mensaje `/start` mejorado**: Ahora explica las dos formas de uso (texto natural + adjunto de documento) con formato HTML limpio.
+- **`REVIEW_THRESHOLD = 5.0`**: Constante configurable que define el importe mínimo para pedir confirmación manual. Transacciones en "Otros" por debajo de este umbral se registran directamente para no saturar al usuario.
+
+### 🔧 Modificado
+- **`handle_document()`**: Ahora separa el lote de Gemini en dos grupos antes de escribir en Sheets: transacciones confirmadas (registro automático batch) y transacciones dudosas (cola de revisión manual).
+- **`system_prompt.txt`**: Reescrito completamente con sección `--- TRANSACCIONES A IGNORAR ---` (pagos de tarjeta, nóminas, transferencias propias) y 15+ reglas de inferencia con nombres comerciales reales españoles (Mercadona, Basic-Fit, Ballenoil, etc.).
+- **Importaciones de `main.py`**: Añadidos `InlineKeyboardButton`, `InlineKeyboardMarkup` y `CallbackQueryHandler`.
+
+### 🐛 Corregido
+- **Categorías volcadas todas a "Otros"**: El prompt anterior no tenía reglas claras de qué ignorar. Los pagos de tarjeta de crédito acumulaban miles de euros en "Otros". Solucionado con la sección de ignorados y las reglas de inferencia detalladas.
+- **Modo debug en producción**: Eliminado el preview de 300 caracteres que se mostraba en Telegram durante el procesamiento.
+
+---
+
 ## [0.3.0] — 2026-05-02
 
 ### ✨ Añadido
