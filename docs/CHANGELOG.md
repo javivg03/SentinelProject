@@ -5,6 +5,16 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.4.1] — 2026-05-03 (Hotfix)
+
+### 🐛 Corregido
+- **`telegram.error.Conflict` continuo en Render**: Render usa zero-downtime deployments, lo que significa que la instancia antigua y la nueva corren **en paralelo** durante el redeploy. Esto causaba que dos bots con el mismo token compitieran por los updates. Resultado: los botones inline no funcionaban porque la instancia que recibía el callback no tenía el `user_data` con `pending_review`.
+- **Migración a Webhook**: El bot ahora usa `run_webhook()` en producción (Render) en lugar de `run_polling()`. Telegram envía los updates directamente a `https://sentinelproject.onrender.com/webhook` — un endpoint único, sin conflictos posibles, sin polling continuo. En desarrollo local se sigue usando polling (no requiere URL pública).
+- **Eliminado servidor aiohttp separado**: Ya no es necesario. PTB's `run_webhook()` levanta su propio servidor HTTP en el puerto `$PORT`, que Render detecta automáticamente como health check.
+- **Simplificación del arranque**: La lógica de `post_init` se limpió y el código de arranque detecta automáticamente si está en Render (mediante `RENDER_EXTERNAL_URL`) para elegir entre webhook y polling.
+
+---
+
 ## [0.4.0] — 2026-05-03
 
 ### ✨ Añadido
