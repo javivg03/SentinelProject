@@ -1,13 +1,11 @@
 import os
 import sys
 import logging
-import threading
 
 # Fijar UTF-8 para la consola de Windows para evitar crasheos con los emojis de los logs
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding='utf-8')
 
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
@@ -21,39 +19,24 @@ from brain import SentinelBrain
 from sheets_connector import SheetsConnector
 from document_parser import parse_document
 
-# --- 1. SERVIDOR WEB Y DEPENDENCIAS GLOBALES ---
 import asyncio
-from aiohttp import web
 
-global_persistence = None
-
-async def health_check(request):
-    return web.Response(text="Sentinel is alive")
-
-async def run_web_server():
-    app = web.Application()
-    app.router.add_get('/', health_check)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.environ.get("PORT", 10000))
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    print(f"🌐 Servidor Web iniciado en puerto {port}")
-    await site.start()
-
-# --- 2. CONFIGURACIÓN ---
+# --- 1. CONFIGURACIÓN ---
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 load_dotenv()
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
+RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
+
 sanitizer = DataSanitizer()
 brain = SentinelBrain()
 sheets = SheetsConnector()
 
-# Importe mínimo para pedir confirmación manual de transacciones en "Otros"
+# Importe mínimo (€) para pedir confirmación manual en transacciones "Otros"
 REVIEW_THRESHOLD = 5.0
 
-# Teclado de categorías para la revisión manual — filas de 3 para buena legibilidad en móvil
+# Teclado de categorías para revisión manual — filas de 3 para buena legibilidad en móvil
 REVIEW_KEYBOARD_ROWS = [
     ["Supermercado", "Comer fuera", "Desayuno"],
     ["Antojos", "Ropa", "Tecnología"],
@@ -67,10 +50,10 @@ REVIEW_KEYBOARD_ROWS = [
 ]
 
 
-# --- 3. LÓGICA DE REVISIÓN MANUAL ---
+# --- 2. LÓGICA DE REVISIÓN MANUAL ---
 
 def build_review_keyboard():
-    """Construye el teclado inline con todas las categorías."""
+    """Construye el teclado inline con todas las categorías disponibles."""
     keyboard = []
     for row in REVIEW_KEYBOARD_ROWS:
         keyboard.append([
@@ -83,7 +66,8 @@ def build_review_keyboard():
 async def ask_next_pending(target, context: ContextTypes.DEFAULT_TYPE):
     """
     Envía la siguiente transacción pendiente de revisión al usuario.
-    'target' puede ser un Update (primera pregunta) o un CallbackQuery (siguientes).
+    - Si 'target' es un CallbackQuery: edita el mensaje existente (flujo de revisión).
+    - Si 'target' es un Update: envía un mensaje nuevo (primera pregunta tras procesar el documento).
     """
     pending = context.user_data.get('pending_review', [])
 
@@ -107,17 +91,17 @@ async def ask_next_pending(target, context: ContextTypes.DEFAULT_TYPE):
     keyboard = build_review_keyboard()
 
     if isinstance(target, CallbackQuery):
-        # Editamos el mensaje existente (reemplaza el teclado anterior)
+        # Editamos el mensaje existente para que sea un flujo limpio sin spam
         await target.edit_message_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
     else:
-        # Primera llamada: enviamos un mensaje nuevo
+        # Primera llamada desde handle_document: enviamos mensaje nuevo
         await target.message.reply_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 
 async def handle_category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Procesa la selección de categoría del usuario para una transacción pendiente."""
+    """Procesa la pulsación de un botón de categoría para una transacción pendiente."""
     query = update.callback_query
-    await query.answer()
+    await query.answer()  # Elimina el spinner de carga del botón
 
     if not query.data.startswith("CAT:"):
         return
@@ -126,18 +110,17 @@ async def handle_category_callback(update: Update, context: ContextTypes.DEFAULT
     pending = context.user_data.get('pending_review', [])
 
     if not pending:
-        await query.edit_message_text("✅ No hay más transacciones pendientes.")
+        await query.edit_message_text("✅ No hay más transacciones pendientes de revisión.")
         return
 
-    # Sacamos la primera transacción de la cola
+    # Extraemos la primera transacción de la cola y actualizamos el estado
     item = pending.pop(0)
     context.user_data['pending_review'] = pending
 
     if chosen_category == "⏭️ Ignorar (no registrar)":
-        logger.info(f"Transacción ignorada manualmente: {item['concepto']} ({item['importe']}€)")
+        logger.info(f"Transacción ignorada por el usuario: {item['concepto']} ({item['importe']}€)")
     else:
-        # Registramos con la categoría elegida por el usuario
-        item['categoria'] = chosen_category
+        # Registramos con la categoría corregida manualmente por el usuario
         sheets.log_expense(
             item['concepto'],
             chosen_category,
@@ -146,26 +129,27 @@ async def handle_category_callback(update: Update, context: ContextTypes.DEFAULT
         )
         logger.info(f"Registrado manualmente: {item['concepto']} → {chosen_category} ({item['importe']}€)")
 
-    # Preguntamos por la siguiente pendiente
+    # Pasamos a la siguiente transacción pendiente
     await ask_next_pending(query, context)
 
 
-# --- 4. HANDLERS PRINCIPALES ---
+# --- 3. HANDLERS PRINCIPALES ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /start — presenta las funcionalidades del bot."""
     await update.message.reply_text(
         "🛡️ <b>Sentinel: Auditor Financiero Personal</b>\n\n"
         "Puedo ayudarte de dos formas:\n\n"
         "📝 <b>Texto natural</b>: Escríbeme un gasto y lo registro.\n"
         "    Ejemplo: <i>'Me he gastado 20€ en cena'</i>\n\n"
         "📎 <b>Extracto bancario</b>: Adjunta tu Excel o PDF del banco y proceso todos los movimientos de golpe.\n"
-        "    Formatos: <code>.xls, .xlsx, .csv, .pdf</code>",
+        "    Formatos soportados: <code>.xls, .xlsx, .csv, .pdf</code>",
         parse_mode=ParseMode.HTML
     )
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Procesa mensajes de texto natural del usuario."""
+    """Procesa mensajes de texto natural del usuario para registro de gastos individuales."""
     raw_text = update.message.text
     if 'history' not in context.user_data:
         context.user_data['history'] = []
@@ -186,7 +170,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for item in resultado:
             if sheets and sheets.log_expense(item['concepto'], item['categoria'], str(item['importe'])):
                 registrados += 1
-                final_response += f"💰 <b>{item['concepto']}</b>\n🏷️ {item['categoria']}\n📉 {item['importe']}€\n\n"
+                final_response += (
+                    f"💰 <b>{item['concepto']}</b>\n"
+                    f"🏷️ {item['categoria']}\n"
+                    f"📉 {item['importe']}€\n\n"
+                )
 
         if registrados > 0:
             context.user_data['history'] = []
@@ -194,12 +182,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Maneja la recepción de archivos Excel (.xls, .xlsx, .csv) y PDF."""
+    """Maneja la recepción de extractos bancarios (Excel o PDF) para procesamiento masivo."""
     document = update.message.document
 
     ext = document.file_name.split('.')[-1].lower()
     if ext not in ['xls', 'xlsx', 'csv', 'pdf']:
-        await update.message.reply_text("❌ Formato no soportado. Por favor, sube un Excel (.xls, .xlsx, .csv) o PDF.")
+        await update.message.reply_text(
+            "❌ Formato no soportado.\n"
+            "Formatos aceptados: <code>.xls, .xlsx, .csv, .pdf</code>",
+            parse_mode=ParseMode.HTML
+        )
         return
 
     msg = await update.message.reply_text("📥 Descargando y procesando documento...")
@@ -212,8 +204,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         raw_text = parse_document(local_path)
 
         # Sanitizamos datos sensibles ANTES de enviar a la IA (Zero-Trust)
+        # Elimina IBANs, DNIs, tarjetas de crédito y teléfonos del texto
         raw_text = sanitizer.clean(raw_text)
 
+        # Limitamos a 15.000 chars para robustez ante documentos inusualmente largos
         if len(raw_text) > 15000:
             raw_text = raw_text[:15000] + "\n[... documento truncado ...]"
 
@@ -221,7 +215,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         resultado, status = brain.process_raw_document(raw_text)
 
-        # Borramos el archivo local inmediatamente por seguridad (Zero-Trust)
+        # Borramos el archivo temporal inmediatamente por seguridad (Zero-Trust)
         if os.path.exists(local_path):
             os.remove(local_path)
 
@@ -232,9 +226,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # Separar transacciones confirmadas de las que necesitan revisión manual:
-        # - Las de categoría "Otros" con importe > REVIEW_THRESHOLD van a la cola de revisión
-        # - El resto se registran directamente en Sheets
+        # Separar transacciones por flujo:
+        # - "Otros" con importe > REVIEW_THRESHOLD → cola de revisión manual
+        # - Resto → registro automático en Sheets
         to_review = [
             m for m in resultado
             if m.get('categoria', '').lower() == 'otros'
@@ -245,50 +239,64 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.edit_text(f"📦 Registrando {len(to_register)} transacciones en Google Sheets...")
         total_insertados = sheets.batch_log_expenses(to_register)
 
-        # Guardamos la cola de revisión en el estado persistente del usuario
         if to_review:
             context.user_data['pending_review'] = to_review
             await msg.edit_text(
                 f"✅ Registradas <b>{total_insertados}</b> transacciones automáticamente.\n\n"
-                f"❓ Hay <b>{len(to_review)}</b> transacciones en categoría 'Otros' (>{REVIEW_THRESHOLD}€) "
-                f"que necesitan tu confirmación. Vamos a revisarlas una a una:",
+                f"❓ Hay <b>{len(to_review)}</b> transacciones en 'Otros' (>{REVIEW_THRESHOLD}€) "
+                "que necesitan tu confirmación. Vamos una a una:",
                 parse_mode=ParseMode.HTML
             )
             await ask_next_pending(update, context)
         else:
-            await msg.edit_text(f"✅ ¡Éxito! Se han registrado {total_insertados} transacciones en tu presupuesto.")
+            await msg.edit_text(
+                f"✅ ¡Éxito! Se han registrado <b>{total_insertados}</b> transacciones en tu presupuesto.",
+                parse_mode=ParseMode.HTML
+            )
 
     except Exception as e:
         logger.error(f"Error en handle_document: {e}", exc_info=True)
         await msg.edit_text(f"❌ Error técnico: <code>{str(e)}</code>", parse_mode=ParseMode.HTML)
-        if os.path.exists(f"temp_{document.file_name}"):
-            os.remove(f"temp_{document.file_name}")
+        temp = f"temp_{document.file_name}"
+        if os.path.exists(temp):
+            os.remove(temp)
 
 
-# --- 5. ARRANQUE ---
-async def start_services(app):
+# --- 4. ARRANQUE ---
+async def post_init(app):
+    """Registro de handlers. Se ejecuta tras inicializar la aplicación."""
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-    # Handler para botones de categorización manual (registrado después de los MessageHandlers)
+    # CallbackQueryHandler para los botones inline de revisión manual
     app.add_handler(CallbackQueryHandler(handle_category_callback, pattern="^CAT:"))
-
-    if os.environ.get("RENDER_EXTERNAL_URL"):
-        asyncio.create_task(run_web_server())
-        print("🌐 Servidor Web de salud iniciado (modo Render).")
-    else:
-        print("💻 Modo local detectado: servidor web de salud desactivado.")
-    print("🚀 Sentinel iniciado correctamente.")
+    logger.info("🚀 Handlers registrados correctamente.")
 
 
 if __name__ == '__main__':
-    # PicklePersistence debe inicializarse en ApplicationBuilder para que
-    # context.user_data persista correctamente entre handlers y reinicios
+    # PicklePersistence inicializado en ApplicationBuilder para garantizar
+    # que context.user_data persiste correctamente entre handlers
     persistence = PicklePersistence(filepath="sentinel_data.pickle")
     app = ApplicationBuilder().token(TOKEN).persistence(persistence).build()
-    app.post_init = start_services
+    app.post_init = post_init
 
-    try:
-        app.run_polling(drop_pending_updates=True)
-    except KeyboardInterrupt:
-        pass
+    if RENDER_URL:
+        # ── PRODUCCIÓN (Render): Webhook ────────────────────────────────────
+        # Telegram envía updates directamente a nuestra URL → sin conflictos,
+        # sin polling, sin instancias duplicadas. Modo correcto para producción.
+        logger.info(f"🌐 Iniciando en modo WEBHOOK → {RENDER_URL}/webhook")
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=int(os.environ.get("PORT", 10000)),
+            url_path="webhook",
+            webhook_url=f"{RENDER_URL}/webhook",
+            drop_pending_updates=True,
+        )
+    else:
+        # ── DESARROLLO LOCAL: Polling ────────────────────────────────────────
+        # Cómodo para desarrollo: no requiere URL pública ni certificado SSL.
+        logger.info("💻 Iniciando en modo POLLING (desarrollo local).")
+        try:
+            app.run_polling(drop_pending_updates=True)
+        except KeyboardInterrupt:
+            pass
