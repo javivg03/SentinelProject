@@ -24,6 +24,12 @@ Durante el desarrollo de Sentinel, se abordaron y resolvieron retos críticos de
 
 ### 4. Normativa PSD2 y Open Banking (Pivotaje Arquitectónico)
 **Reto**: Inicialmente, se implementó una integración directa con APIs bancarias (Tink, GoCardless) para la lectura de movimientos en tiempo real. Sin embargo, la estricta **normativa europea PSD2** bloquea el acceso de aplicaciones de terceros a cuentas bancarias reales sin una licencia o costosas suscripciones empresariales.  
+
+---
+
+### 5. Auditoría de Transacciones (Doble Escritura)
+**Reto**: Escribir fórmulas matemáticas grandes en las celdas de un Google Sheets (`=5+10+15`) para trazar los gastos era frágil, no escalable y destruía la meta-información de la transacción (fecha, concepto).
+**Solución**: Se implementó una **arquitectura de doble escritura** (Dual-logging). El bot primero escribe la fila individual en una pestaña `Transacciones` (Append-only log), y posteriormente suma el importe al total acumulado en la pestaña `Presupuesto`. De este modo, se mantiene la limpieza del dashboard principal sin perder el rastro auditable (fecha, concepto, importe) de cada operación individual.
 **Solución**: En lugar de abandonar la automatización, el proyecto pivotó hacia un sistema "Batch" vía Telegram. El usuario exporta los movimientos en formato Excel/CSV desde la app de su banco y se los envía al Bot. Sentinel procesa masivamente el documento, extrae las filas, las categoriza con IA y las inserta atómicamente en Google Sheets, sorteando el bloqueo de PSD2 de forma gratuita, universal y segura.
 
 ---

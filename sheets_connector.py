@@ -38,6 +38,13 @@ class SheetsConnector:
 
             self.spreadsheet = self.client.open_by_key(self.spreadsheet_id)
             self.sheet = self.spreadsheet.worksheet("Presupuesto")
+            try:
+                self.transactions_sheet = self.spreadsheet.worksheet("Transacciones")
+            except gspread.exceptions.WorksheetNotFound:
+                # Si por algún casual el usuario no la ha creado, la creamos al vuelo
+                self.transactions_sheet = self.spreadsheet.add_worksheet(title="Transacciones", rows="1000", cols="5")
+                self.transactions_sheet.append_row(["Fecha", "Concepto", "Categoría", "Importe"])
+                print("✨ Pestaña 'Transacciones' creada automáticamente.")
             
             # 4. Mapeo Cronológico (Mes -> Columna)
             # Enero es Col B (2), Febrero Col C (3), etc.
@@ -95,7 +102,11 @@ class SheetsConnector:
             
             new_total = current_val + amount_to_add
 
-            # 3. Commit a Google Sheets
+            # 3. Log detallado en Transacciones
+            timestamp = fecha if fecha else datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+            self.transactions_sheet.append_row([timestamp, concept, category, amount_to_add])
+            
+            # 4. Commit a Google Sheets (Presupuesto)
             self.sheet.update_cell(target_row, col, new_total)
             print(f"💰 Registro exitoso: {category} | {current_val}€ -> {new_total}€")
             return True
@@ -112,6 +123,21 @@ class SheetsConnector:
         if not parsed_items: return 0
             
         try:
+            # 0. Insertar en el Log detallado de Transacciones
+            rows_to_append = []
+            for item in parsed_items:
+                fecha_log = item.get('fecha') or datetime.datetime.now().strftime("%Y-%m-%d")
+                rows_to_append.append([
+                    fecha_log,
+                    item.get('concepto', 'Sin concepto'),
+                    item.get('categoria', 'Otros'),
+                    self._clean_value(item.get('importe', 0))
+                ])
+            
+            if rows_to_append:
+                self.transactions_sheet.append_rows(rows_to_append)
+                print(f"📝 {len(rows_to_append)} transacciones registradas en el Log.")
+
             # 1. Agrupar importes por (mes_col, categoría) respetando la fecha de cada item
             aggregated = {}  # clave: (col, cat_row) -> valor acumulado
             

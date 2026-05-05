@@ -5,6 +5,16 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.5.0] — 2026-05-05
+
+### ✨ Añadido
+- **Log de Transacciones (Auditoría)**: Implementada una nueva funcionalidad arquitectónica en Google Sheets. A partir de ahora, además de sumar los importes en la pestaña `Presupuesto`, el bot guarda un registro individual exhaustivo en la pestaña `Transacciones`.
+  - El formato de cada fila incluye: `Fecha | Concepto | Categoría | Importe`.
+  - Soporta inserciones individuales (vía texto) e inserciones masivas en lote (`append_rows`) para subidas de archivos Excel/PDF, mejorando el rendimiento y evitando saturar la API.
+  - La inicialización del conector (`SheetsConnector`) creará automáticamente la pestaña `Transacciones` si no existe.
+
+---
+
 ## [0.4.1] — 2026-05-03 (Hotfix)
 
 ### 🐛 Corregido
