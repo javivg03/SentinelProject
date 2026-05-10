@@ -28,7 +28,7 @@ class SentinelBrain:
             raise ValueError("❌ ERROR: No se encontró GOOGLE_API_KEY en el entorno.")
 
         self.client = genai.Client(api_key=api_key)
-        self.model_name = "gemini-2.5-flash"
+        self.model_name = "gemini-1.5-flash"
         self.prompts_dir = "prompts"
 
     # ─────────────────────────────────────────────────────────────────────────
