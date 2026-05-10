@@ -398,13 +398,42 @@ async def handle_document(
 # 5. REGISTRO DE HANDLERS
 # ─────────────────────────────────────────────────────────────────────────────
 
+async def debug_sheet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Comando temporal /debug — muestra los datos RAW que gspread devuelve
+    del Sheet para poder diagnosticar qué ve el bot exactamente.
+    Eliminar una vez resueltos los problemas de lectura.
+    """
+    import json
+    data = sheets.get_full_budget_data()
+    resumen = data.get("resumen", {})
+    ahorro = resumen.get("Ahorro", {})
+    ingresos_totales = resumen.get("Total Ingresos", {})
+
+    text = (
+        f"<b>🔍 Debug — Datos del Sheet</b>\n\n"
+        f"<b>Ahorro por mes:</b>\n"
+        + "\n".join(f"  • {m}: {v}€" for m, v in ahorro.items())
+        + f"\n\n<b>Total Ingresos por mes:</b>\n"
+        + "\n".join(f"  • {m}: {v}€" for m, v in ingresos_totales.items())
+        + f"\n\n<b>Secciones detectadas:</b>\n"
+        f"  • ingresos: {list(data.get('ingresos', {}).keys())}\n"
+        f"  • gastos_vitales: {list(data.get('gastos_vitales', {}).keys())}\n"
+        f"  • gastos_ocio: {list(data.get('gastos_ocio', {}).keys())}\n"
+        f"  • resumen: {list(resumen.keys())}"
+    )
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+
+
 def register_handlers(app) -> None:
     """Registra todos los handlers en la aplicación de PTB."""
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("debug", debug_sheet))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(CallbackQueryHandler(handle_callback, pattern="^CAT:"))
     logger.info("🚀 Handlers registrados correctamente.")
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
