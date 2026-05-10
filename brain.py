@@ -1,4 +1,5 @@
 import os
+import re
 import json
 from datetime import datetime
 from google import genai
@@ -231,13 +232,66 @@ class SentinelBrain:
                 model=self.model_name,
                 contents=prompt,
             )
-            return response.text.strip()
+            return self._sanitize_html_for_telegram(response.text.strip())
 
         except Exception as e:
             print(f"❌ Error en answer_financial_question: {e}")
             return "No pude acceder a tus datos financieros en este momento. Inténtalo de nuevo."
 
-    def generate_analysis(self, budget_data: dict, focus: str = None) -> str:
+    @staticmethod
+    def _sanitize_html_for_telegram(text: str) -> str:
+        """
+        Elimina o convierte etiquetas HTML no soportadas por Telegram.
+
+        Telegram solo acepta un subconjunto muy limitado de HTML:
+          <b>, <i>, <u>, <s>, <code>, <pre>, <a href="...">
+
+        Etiquetas como <p>, <div>, <h1>-<h6>, <ul>, <li>, <br>, <span>
+        causan 'BadRequest: Can't parse entities' si se envían tal cual.
+
+        Estrategia:
+        - <br> y </p> se convierten en salto de línea
+        - <h1>-<h6> se convierten en <b>
+        - <li> se convierte en •
+        - El resto de tags no soportados se eliminan sin tocar el contenido
+        """
+        # Permitidos en Telegram HTML mode
+        ALLOWED = {
+            'b', '/b', 'strong', '/strong',
+            'i', '/i', 'em', '/em',
+            'u', '/u', 'ins', '/ins',
+            's', '/s', 'strike', '/strike', 'del', '/del',
+            'code', '/code',
+            'pre', '/pre',
+        }
+
+        def replace_tag(match):
+            inner = match.group(1).strip().lower()
+            tag = inner.split()[0].split('/')[0]  # nombre base del tag
+
+            # Convertir <br> a newline
+            if tag == 'br':
+                return '\n'
+            # Convertir </p> a newline (fin de párrafo)
+            if inner == '/p':
+                return '\n'
+            # Convertir <hN> a <b> y </hN> a </b>
+            if re.match(r'h[1-6]$', tag):
+                return '<b>' if not inner.startswith('/') else '</b>'
+            # Convertir <li> a viñeta
+            if tag == 'li':
+                return '\n• '
+            # Pasar etiquetas permitidas tal cual
+            if inner in ALLOWED or inner.startswith('a ') or inner == '/a':
+                return match.group(0)
+            # Eliminar cualquier otra etiqueta no soportada
+            return ''
+
+        cleaned = re.sub(r'<([^>]+)>', replace_tag, text)
+        # Colapsar más de 2 newlines consecutivos
+        cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+        return cleaned.strip()
+
         """
         Genera un análisis financiero en lenguaje natural a partir de los
         datos leídos del Sheet (ingresos, gastos por categoría, ahorro).
