@@ -5,7 +5,40 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [0.6.0] — 2026-05-10
+
+### ✨ Añadido
+- **Clasificador de Intenciones (`classify_intent`)**: El bot ya no asume que todo mensaje es un gasto. Antes de procesar cualquier texto, llama a Gemini con un prompt especializado (`query_prompt.txt`) que determina si el usuario quiere **registrar** (`log`), **consultar** (`query`), **analizar** (`analysis`) o la intención es **ambigua** (`unknown`). Basado en la arquitectura de dos flujos propuesta.
+- **Consultas Financieras en Lenguaje Natural**: El usuario puede ahora preguntar directamente al bot:
+  - `¿Cuánto llevo en gasolina?` → `query_category_total`
+  - `¿Cuánto he gastado esta semana?` → `weekly_total`
+  - `¿Cuánto he ahorrado este mes?` → `monthly_savings`
+  - `¿En qué categoría gasto más?` → `top_categories`
+  - `Muéstrame mis últimas 5 transacciones` → `last_transactions`
+  - `¿Cuánto gasté entre el 1 y el 15 de mayo?` → `period_total`
+- **Análisis Financiero con IA**: Un nuevo tipo de intención (`analysis`) genera un resumen en lenguaje natural de la situación financiera del mes usando los datos reales del Sheet.
+- **Métodos de Lectura en `SheetsConnector`**: Nuevos métodos que leen datos de las pestañas `Presupuesto` y `Transacciones`:
+  - `query_category_total()`: total de una categoría en un mes
+  - `query_monthly_totals()`: resumen completo (ingresos, gastos, ahorro, por categoría)
+  - `query_last_transactions()`: últimas N filas del log
+  - `query_period_total()`: suma entre dos fechas exactas desde `Transacciones`
+  - `query_top_categories()`: ranking de categorías por gasto
+- **Health Check HTTP en `/`**: El servidor webhook ahora responde `200 OK` en la ruta raíz (`/`). Esto resuelve definitivamente el problema con UptimeRobot y cron-job.org que marcaban el servicio como caído (antes devolvía `404`).
+- **`prompts/query_prompt.txt`**: Nuevo archivo de prompt exclusivo para el clasificador de intenciones. Separado de `system_prompt.txt` para facilitar mantenimiento independiente de cada flujo.
+- **`brain.generate_analysis()`**: Nuevo método que llama a Gemini con los datos financieros reales para producir un texto de análisis en lenguaje natural.
+
+### 🔧 Modificado (Refactoring General)
+- **`brain.py`**: Refactorizado completamente. Añadidos `_load_prompt()` (carga cualquier prompt por nombre), `_inject_date()` (inyecta `{FECHA_ACTUAL}` dinámicamente en los prompts), y `classify_intent()`. Eliminado `_load_system_prompt()` reemplazado por el método genérico.
+- **`system_prompt.txt`**: Añadido soporte para fecha dinámica (`{FECHA_ACTUAL}`). El campo `fecha` en el JSON de respuesta pasa de `YYYY-MM` a `YYYY-MM-DD` (fecha completa con día), lo que permite consultas semanales y por día.
+- **`main.py`**: Añadido el pipeline de intención en `handle_message()`. Nuevas funciones `handle_query_intent()` y `handle_analysis_intent()`. Servidor aiohttp con ruta `/` para health check. El mensaje `/start` actualizado para describir las tres capacidades del bot.
+- **`sheets_connector.py`**: Refactorizado completamente. Constante `SCOPES` a nivel de clase. Añadido helper `_today()`. Mejorada la detección de tipo (INGRESO/GASTO) al escribir en `Transacciones`. La columna `Tipo` se añade al log.
+- **`sanitizer.py`**: Los patrones regex se compilan una sola vez al instanciar la clase (mejora de rendimiento en documentos largos).
+- **`document_parser.py`**: Soporte nativo para `.csv` con detección automática de separador. Los PDFs incluyen número de página en el texto extraído para mayor contexto.
+
+---
+
 ## [0.5.0] — 2026-05-05
+
 
 ### ✨ Añadido
 - **Log de Transacciones (Auditoría)**: Implementada una nueva funcionalidad arquitectónica en Google Sheets. A partir de ahora, además de sumar los importes en la pestaña `Presupuesto`, el bot guarda un registro individual exhaustivo en la pestaña `Transacciones`.
