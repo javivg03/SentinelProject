@@ -271,51 +271,126 @@ class SheetsConnector:
 
     def get_full_budget_data(self) -> dict:
         """
-        Lee TODOS los datos del Sheet de Presupuesto (todas las categorías,
-        todos los meses del año) y los devuelve como un dict estructurado.
+        Lee TODOS los datos del Sheet de Presupuesto y los devuelve
+        organizados por secciones, respetando la estructura real del Excel:
 
-        Este método es la base del sistema de consultas libre: en lugar de
-        hacer múltiples llamadas a la API para cada mes/categoría, hacemos
-        UNA sola lectura masiva y dejamos que Gemini interprete cualquier
-        pregunta sobre los datos completos.
+        - ingresos        : Nómina, Otros (ingresos), Regalos (recibidos)
+        - gastos_vitales  : Alquiler, Gasolina, Supermercado, etc.
+        - gastos_ocio     : Ropa, Comer fuera, Tabaco, etc.
+        - resumen         : Totales y Ahorro ya calculados por el propio Excel
+
+        La clave del diseño es que el Sheet YA tiene calculado el Ahorro
+        mediante fórmulas propias. Este método lo lee directamente en lugar
+        de intentar recalcularlo, evitando errores de lógica.
+
+        Detecta las secciones dinámicamente buscando las filas marcadoras:
+        "Total Ingresos", "Total gastos vitales", "Total gastos extraordinarios".
+        Esto hace el método robusto frente a cambios de orden en el Sheet.
 
         Returns:
             {
-                "Supermercado": {"Enero": 150.0, "Febrero": 200.0, ...},
-                "Gasolina":     {"Enero": 40.0, ...},
-                ...
+                "ingresos": {"Nómina": {"Enero": 1959.77, ...}, ...},
+                "gastos_vitales": {"Alquiler": {"Enero": 325.0, ...}, ...},
+                "gastos_ocio": {"Comer fuera": {"Enero": 112.84, ...}, ...},
+                "resumen": {
+                    "Total Ingresos":  {"Enero": 2759.77, ...},
+                    "Total Gastos Vitales": {"Enero": 551.0, ...},
+                    "Total Gastos Ocio": {"Enero": 900.0, ...},
+                    "Ahorro": {"Enero": 755.68, ...},
+                    "Patrimonio": {"Enero": 3457.82, ...},
+                }
             }
         """
         MONTH_NAMES = [
             "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
             "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
         ]
+
+        # Marcadores de sección — detectamos dinámicamente
+        MARKER_INCOME_END    = "total ingresos"
+        MARKER_VITAL_END     = "total gastos vitales"
+        MARKER_OCIO_END      = "total gastos"   # cubre "total gastos extraordinarios..."
+        MARKER_SAVINGS       = "ahorro"
+        MARKER_PATRIMONY     = "patrimonio"
+        MARKER_NOTES         = "notas"
+
+        result = {
+            "ingresos": {},
+            "gastos_vitales": {},
+            "gastos_ocio": {},
+            "resumen": {},
+        }
+
         try:
             all_values = self.sheet.get_all_values()
-            budget = {}
+            section = "INCOME"  # Empezamos en la sección de ingresos
 
             for row in all_values:
                 if not row or not row[0].strip():
                     continue
-                cat_name = row[0].strip()
-                cat_data = {}
-                for i, month in enumerate(MONTH_NAMES):
-                    col_idx = i + 1  # Columna B en adelante
-                    val = (
-                        self._clean_value(row[col_idx])
-                        if col_idx < len(row)
-                        else 0.0
-                    )
-                    if val > 0:
-                        cat_data[month] = val
-                if cat_data:
-                    budget[cat_name] = cat_data
 
-            return budget
+                label = row[0].strip()
+                label_lower = label.lower()
+
+                # Parar en las notas (fin de datos relevantes)
+                if label_lower.startswith(MARKER_NOTES):
+                    break
+
+                # Extraer valores mensuales de la fila (columnas B-M = índices 1-12)
+                monthly = {}
+                for i, month in enumerate(MONTH_NAMES):
+                    raw = row[i + 1] if (i + 1) < len(row) else ""
+                    val = self._clean_value(raw)
+                    if val > 0:
+                        monthly[month] = val
+
+                # ── Detectar filas de resumen / marcadores de sección ──────
+                if MARKER_INCOME_END in label_lower:
+                    if monthly:
+                        result["resumen"]["Total Ingresos"] = monthly
+                    section = "VITAL"
+                    continue
+
+                if MARKER_VITAL_END in label_lower:
+                    if monthly:
+                        result["resumen"]["Total Gastos Vitales"] = monthly
+                    section = "OCIO"
+                    continue
+
+                if MARKER_OCIO_END in label_lower and section == "OCIO":
+                    if monthly:
+                        result["resumen"]["Total Gastos Ocio"] = monthly
+                    section = "OTHER"
+                    continue
+
+                if label_lower == MARKER_SAVINGS:
+                    if monthly:
+                        result["resumen"]["Ahorro"] = monthly
+                    continue
+
+                if MARKER_PATRIMONY in label_lower:
+                    if monthly:
+                        result["resumen"]["Patrimonio"] = monthly
+                    continue
+
+                # ── Asignar la fila a su sección correspondiente ───────────
+                if not monthly:
+                    continue  # Fila sin datos, ignorar
+
+                if section == "INCOME":
+                    result["ingresos"][label] = monthly
+                elif section == "VITAL":
+                    result["gastos_vitales"][label] = monthly
+                elif section == "OCIO":
+                    result["gastos_ocio"][label] = monthly
+                # section == "OTHER" → ignorar (notas, patrimonio ya capturado)
+
+            return result
 
         except Exception as e:
             print(f"❌ Error en get_full_budget_data: {e}")
             return {}
+
 
     def query_category_total(self, category: str, month: int = None) -> float:
         """

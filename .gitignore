@@ -21,3 +21,8 @@ docs/gem_prompt.md
 
 # Persistencia Telegram
 *.pickle
+
+# Archivos Excel/financieros (solo para referencia local, nunca al repo)
+docs/*.xlsx
+docs/*.xls
+docs/*.csv
