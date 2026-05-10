@@ -98,21 +98,38 @@ class SheetsConnector:
 
     def _clean_value(self, val) -> float:
         """
-        Normaliza un valor de celda (puede ser texto con '€', comas, espacios)
-        a un float positivo operable.
+        Normaliza un valor de celda a float positivo operable.
+
+        Maneja todos los formatos que puede devolver gspread:
+        - Float/int nativo:    1226.52   → 1226.52
+        - Formato anglosajón: "1226.52"  → 1226.52
+        - Formato europeo:    "1.226,52" → 1226.52  ← era el bug
+        - Con símbolo euro:   "1.226,52 €" → 1226.52
+        - Celda vacía/None:   None, "", " " → 0.0
+
+        El bug anterior: "1.226,52".replace(',','.') → "1.226.52"
+        → float() lanza ValueError → devuelve 0.0 silenciosamente.
+        Esto hacía que TODOS los valores ≥ 1.000€ se perdieran.
         """
-        if val is None or str(val).strip() == "":
+        if val is None:
             return 0.0
+        # Si gspread devuelve un número nativo (int/float), usarlo directamente
+        if isinstance(val, (int, float)):
+            return abs(float(val))
         try:
-            sanitized = (
-                str(val)
-                .replace("€", "")
-                .replace(" ", "")
-                .replace(",", ".")
-                .strip()
-            )
-            return abs(float(sanitized))
-        except ValueError:
+            s = str(val).replace("€", "").replace(" ", "").strip()
+            if not s or s.lower() == "none":
+                return 0.0
+            # Formato europeo: tiene AMBOS separadores (. miles, , decimal)
+            # Ejemplo: "1.226,52" → eliminar punto, cambiar coma → "1226.52"
+            if "," in s and "." in s:
+                s = s.replace(".", "").replace(",", ".")
+            elif "," in s:
+                # Solo coma → separador decimal (ej: "755,68" → "755.68")
+                s = s.replace(",", ".")
+            # Solo punto → formato estándar, no tocar (ej: "1226.52")
+            return abs(float(s))
+        except (ValueError, TypeError):
             return 0.0
 
     def _get_month_col(self, fecha_str: str = None) -> int:
