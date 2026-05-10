@@ -127,144 +127,34 @@ MONTH_NAMES = {
 }
 
 
-async def handle_query_intent(
-    update: Update, intent_data: dict
+async def handle_financial_question(
+    update: Update, user_question: str
 ) -> None:
     """
-    Resuelve consultas financieras del usuario leyendo datos de Google Sheets.
-    Enrutado desde handle_message() cuando classify_intent() devuelve 'query'.
+    Responde CUALQUIER consulta o análisis financiero del usuario.
+
+    Reemplaza los dos handlers anteriores (handle_query_intent y
+    handle_analysis_intent) con un enfoque unificado:
+    1. Leer TODOS los datos del Sheet de una sola vez (todos los meses,
+       todas las categorías)
+    2. Pasar esos datos + la pregunta del usuario a Gemini
+    3. Dejar que Gemini responda libremente sin restricciones
+
+    Es equivalente a pegarle el Excel completo al usuario y que él mismo
+    responda cualquier duda. Sin limitaciones de mes ni de tipo de consulta.
     """
-    q_type = intent_data.get("query_type")
-    category = intent_data.get("category")
-    now = datetime.datetime.now()
-    month_name = MONTH_NAMES.get(now.month, "este mes")
+    msg = await update.message.reply_text("📊 Consultando tus datos financieros...")
 
-    # ── Gasto en una categoría concreta ──────────────────────────────────────
-    if q_type == "category_total" and category:
-        total = sheets.query_category_total(category)
-        if total == -1.0:
-            await update.message.reply_text(
-                f"❌ No encontré la categoría <b>{category}</b> en tu presupuesto.",
-                parse_mode=ParseMode.HTML,
-            )
-        else:
-            await update.message.reply_text(
-                f"📊 En <b>{category}</b> llevas gastados <b>{total}€</b> en {month_name}.",
-                parse_mode=ParseMode.HTML,
-            )
-
-    # ── Total gastado en el mes ───────────────────────────────────────────────
-    elif q_type == "monthly_total":
-        data = sheets.query_monthly_totals()
-        await update.message.reply_text(
-            f"📅 Total gastado en <b>{month_name}</b>: <b>{data.get('expenses', 0)}€</b>",
-            parse_mode=ParseMode.HTML,
-        )
-
-    # ── Ingresos del mes ─────────────────────────────────────────────────────
-    elif q_type == "monthly_income":
-        data = sheets.query_monthly_totals()
-        await update.message.reply_text(
-            f"💼 Ingresos en <b>{month_name}</b>: <b>{data.get('income', 0)}€</b>",
-            parse_mode=ParseMode.HTML,
-        )
-
-    # ── Ahorro del mes ───────────────────────────────────────────────────────
-    elif q_type == "monthly_savings":
-        data = sheets.query_monthly_totals()
-        savings = data.get("savings", 0)
-        emoji = "✅" if savings >= 0 else "⚠️"
-        await update.message.reply_text(
-            f"{emoji} Ahorro en <b>{month_name}</b>: <b>{savings}€</b>\n"
-            f"(Ingresos: {data.get('income', 0)}€ — Gastos: {data.get('expenses', 0)}€)",
-            parse_mode=ParseMode.HTML,
-        )
-
-    # ── Total entre dos fechas ───────────────────────────────────────────────
-    elif q_type == "period_total":
-        start = intent_data.get("period_start")
-        end = intent_data.get("period_end") or now.strftime("%Y-%m-%d")
-        if not start:
-            # Si no hay fecha inicio, asumimos esta semana
-            start = (now - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
-        result = sheets.query_period_total(start, end)
-        await update.message.reply_text(
-            f"📆 Entre <b>{start}</b> y <b>{end}</b>:\n"
-            f"  💸 Gastos: <b>{result['expenses']}€</b>\n"
-            f"  💼 Ingresos: <b>{result['income']}€</b>\n"
-            f"  🔢 Transacciones: {result['count']}",
-            parse_mode=ParseMode.HTML,
-        )
-
-    # ── Últimos 7 días ───────────────────────────────────────────────────────
-    elif q_type == "weekly_total":
-        start = (now - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
-        end = now.strftime("%Y-%m-%d")
-        result = sheets.query_period_total(start, end)
-        await update.message.reply_text(
-            f"📆 Últimos 7 días: <b>{result['expenses']}€</b> en gastos "
-            f"({result['count']} transacciones)",
-            parse_mode=ParseMode.HTML,
-        )
-
-    # ── Categorías top ───────────────────────────────────────────────────────
-    elif q_type == "top_categories":
-        limit = intent_data.get("limit", 5)
-        top = sheets.query_top_categories(top_n=limit)
-        if not top:
-            await update.message.reply_text("No hay datos de gasto este mes.")
-            return
-        lines = "\n".join(
-            f"  {i+1}. <b>{item['categoria']}</b>: {item['total']}€"
-            for i, item in enumerate(top)
-        )
-        await update.message.reply_text(
-            f"🏆 Top {limit} categorías en <b>{month_name}</b>:\n{lines}",
-            parse_mode=ParseMode.HTML,
-        )
-
-    # ── Últimas N transacciones ──────────────────────────────────────────────
-    elif q_type == "last_transactions":
-        limit = intent_data.get("limit", 5)
-        txns = sheets.query_last_transactions(limit=limit)
-        if not txns:
-            await update.message.reply_text("No hay transacciones registradas aún.")
-            return
-        lines = "\n".join(
-            f"  • <b>{t['concepto']}</b> — {t['importe']}€ [{t['fecha']}]"
-            for t in txns
-        )
-        await update.message.reply_text(
-            f"🕐 Últimas {limit} transacciones:\n{lines}",
-            parse_mode=ParseMode.HTML,
-        )
-
-    else:
-        await update.message.reply_text(
-            "No entendí exactamente qué datos quieres ver. "
-            "Prueba con: '¿cuánto llevo en supermercado?', "
-            "'¿cuánto he gastado esta semana?', etc."
-        )
-
-
-async def handle_analysis_intent(
-    update: Update, intent_data: dict
-) -> None:
-    """
-    Genera un análisis financiero en lenguaje natural usando Gemini.
-    Enrutado desde handle_message() cuando classify_intent() devuelve 'analysis'.
-    """
-    await update.message.reply_text("🧠 Analizando tus finanzas...")
-    data = sheets.query_monthly_totals()
-    if not data:
-        await update.message.reply_text(
-            "⚠️ No pude leer datos del Sheet para el análisis. "
-            "Comprueba la conexión con Google Sheets."
+    budget_data = sheets.get_full_budget_data()
+    if not budget_data:
+        await msg.edit_text(
+            "⚠️ No pude leer datos de tu hoja de presupuesto. "
+            "Comprueba que el Sheet tiene datos y la conexión está activa."
         )
         return
-    focus = intent_data.get("focus")
-    analysis_text = brain.generate_analysis(data, focus=focus)
-    await update.message.reply_text(analysis_text)
+
+    answer = brain.answer_financial_question(budget_data, user_question)
+    await msg.edit_text(answer)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -344,12 +234,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     intent = intent_data.get("intent", "log")
 
     # ── Paso 2: Enrutar según intención ─────────────────────────────────────
-    if intent == "query":
-        await handle_query_intent(update, intent_data)
-        return
-
-    if intent == "analysis":
-        await handle_analysis_intent(update, intent_data)
+    # Tanto 'query' como 'analysis' van al mismo handler unificado.
+    # La diferencia entre "consulta" y "análisis" la gestiona Gemini internamente.
+    if intent in ("query", "analysis"):
+        await handle_financial_question(update, clean_text)
         return
 
     if intent == "unknown":

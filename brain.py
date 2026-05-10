@@ -168,7 +168,60 @@ class SentinelBrain:
             print(f"❌ Error en Gemini Document Parsing: {e}")
             return [], "ERROR"
 
-    def generate_analysis(self, financial_data: dict, focus: str = None) -> str:
+    def answer_financial_question(self, budget_data: dict, user_question: str) -> str:
+        """
+        Responde CUALQUIER pregunta financiera del usuario basándose en el
+        contenido completo de su hoja de presupuesto (todos los meses, todas
+        las categorías).
+
+        Este método reemplaza el routing a funciones específicas. En lugar de
+        detectar 'query_type' y llamar a funciones separadas, pasamos todos
+        los datos a Gemini y dejamos que él responda libremente.
+
+        Es equivalente a pegarle el Excel al usuario y pedirle que responda.
+        Soporta cualquier pregunta: media de meses, comparativas, totales
+        históricos, tendencias, etc.
+
+        Args:
+            budget_data: Dict completo de {categoría: {mes: importe}}
+            user_question: Pregunta en lenguaje natural del usuario
+
+        Returns:
+            Respuesta en texto natural (sin JSON), lista para enviar por Telegram.
+        """
+        try:
+            fecha_actual = datetime.now().strftime("%Y-%m-%d")
+            año_actual = datetime.now().year
+
+            prompt = (
+                f"Eres Sentinel, un asesor financiero personal profesional, directo y claro.\n"
+                f"Fecha actual: {fecha_actual}. Año en curso: {año_actual}.\n\n"
+                "Tienes acceso al presupuesto completo del usuario: todos los meses del año "
+                "y todas las categorías de gasto e ingreso. Los datos son:\n\n"
+                f"{json.dumps(budget_data, ensure_ascii=False, indent=2)}\n\n"
+                f"El usuario pregunta: \"{user_question}\"\n\n"
+                "Instrucciones:\n"
+                "- Responde de forma DIRECTA y CONCRETA a lo que pregunta.\n"
+                "- Si pregunta por un mes concreto, busca ese mes en los datos.\n"
+                "- Si pregunta por medias, calúlculas tú mismo sumando y dividiendo.\n"
+                "- Si pregunta por comparativas entre meses, hazlas.\n"
+                "- Si un mes no tiene datos, dílo claramente (\"En enero no hay registros\").\n"
+                "- Usa emojis con moderación. Máximo 250 palabras.\n"
+                "- Responde única y exclusivamente en español."
+            )
+
+            # Para respuestas en lenguaje natural no forzamos JSON
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+            )
+            return response.text.strip()
+
+        except Exception as e:
+            print(f"❌ Error en answer_financial_question: {e}")
+            return "No pude acceder a tus datos financieros en este momento. Inténtalo de nuevo."
+
+    def generate_analysis(self, budget_data: dict, focus: str = None) -> str:
         """
         Genera un análisis financiero en lenguaje natural a partir de los
         datos leídos del Sheet (ingresos, gastos por categoría, ahorro).

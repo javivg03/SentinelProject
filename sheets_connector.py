@@ -269,6 +269,54 @@ class SheetsConnector:
     # LECTURA — Consultas financieras del usuario
     # ─────────────────────────────────────────────────────────────────────────
 
+    def get_full_budget_data(self) -> dict:
+        """
+        Lee TODOS los datos del Sheet de Presupuesto (todas las categorías,
+        todos los meses del año) y los devuelve como un dict estructurado.
+
+        Este método es la base del sistema de consultas libre: en lugar de
+        hacer múltiples llamadas a la API para cada mes/categoría, hacemos
+        UNA sola lectura masiva y dejamos que Gemini interprete cualquier
+        pregunta sobre los datos completos.
+
+        Returns:
+            {
+                "Supermercado": {"Enero": 150.0, "Febrero": 200.0, ...},
+                "Gasolina":     {"Enero": 40.0, ...},
+                ...
+            }
+        """
+        MONTH_NAMES = [
+            "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+            "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+        ]
+        try:
+            all_values = self.sheet.get_all_values()
+            budget = {}
+
+            for row in all_values:
+                if not row or not row[0].strip():
+                    continue
+                cat_name = row[0].strip()
+                cat_data = {}
+                for i, month in enumerate(MONTH_NAMES):
+                    col_idx = i + 1  # Columna B en adelante
+                    val = (
+                        self._clean_value(row[col_idx])
+                        if col_idx < len(row)
+                        else 0.0
+                    )
+                    if val > 0:
+                        cat_data[month] = val
+                if cat_data:
+                    budget[cat_name] = cat_data
+
+            return budget
+
+        except Exception as e:
+            print(f"❌ Error en get_full_budget_data: {e}")
+            return {}
+
     def query_category_total(self, category: str, month: int = None) -> float:
         """
         Devuelve el total gastado en una categoría durante el mes indicado
