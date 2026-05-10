@@ -28,7 +28,7 @@ class SentinelBrain:
             raise ValueError("❌ ERROR: No se encontró GOOGLE_API_KEY en el entorno.")
 
         self.client = genai.Client(api_key=api_key)
-        self.model_name = "gemini-1.5-flash"
+        self.model_name = "gemini-2.5-flash"
         self.prompts_dir = "prompts"
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -73,6 +73,57 @@ class SentinelBrain:
     # CLASIFICADOR DE INTENCIÓN — Enrutador principal
     # ─────────────────────────────────────────────────────────────────────────
 
+    def _keyword_classify_intent(self, text: str) -> str | None:
+        """
+        Clasificador rápido basado en palabras clave.
+
+        Maneja los casos obvios sin llamar a la API de Gemini, ahorrando
+        ~50% de las llamadas en uso normal.
+
+        Returns:
+            'log'   si el mensaje claramente es un gasto/ingreso a registrar
+            'query' si el mensaje claramente es una consulta de datos
+            None    si no hay certeza → delegar a Gemini
+        """
+        t = text.lower().strip()
+
+        # Patrones que indican CONSULTA financiera (van primero para evitar
+        # falsos positivos con mensajes que contienen € pero son preguntas)
+        QUERY_STARTERS = (
+            "cuánto", "cuanto", "qué", "que", "cuál", "cual",
+            "cuáles", "cuales", "cómo", "como", "dónde",
+            "muestra", "dame", "dime", "enseñame", "lista",
+            "resumen", "presupuesto", "balance", "informe",
+        )
+        QUERY_KEYWORDS = (
+            "llevo", "gasté", "gaste", "ingresos", "ahorro", "ahorré",
+            "ahorrado", "gastado", "disponible", "queda", "esta semana",
+            "este mes", "mes pasado", "enero", "febrero", "marzo", "abril",
+            "mayo", "junio", "julio", "agosto", "septiembre", "octubre",
+            "noviembre", "diciembre", "media", "promedio", "top", "últimas",
+            "transacciones", "movimientos", "categoría", "categoria",
+        )
+
+        if any(t.startswith(w) for w in QUERY_STARTERS):
+            return "query"
+        if any(kw in t for kw in QUERY_KEYWORDS):
+            return "query"
+
+        # Patrones que indican REGISTRO de gasto/ingreso
+        LOG_VERBS = (
+            "gasté", "gaste", "pagué", "pague", "compré", "compre",
+            "he gastado", "he pagado", "he comprado", "costó", "costo",
+            "me ha costado", "cobré", "cobre", "me han pagado", "recibi",
+            "recibí", "nómina", "nomina",
+        )
+        has_amount = any(c.isdigit() for c in t) and ("€" in t or "euro" in t or "eur" in t)
+
+        if has_amount and any(v in t for v in LOG_VERBS):
+            return "log"
+
+        # No hay certeza suficiente → delegar a Gemini
+        return None
+
     def classify_intent(self, user_message: str) -> dict:
         """
         Determina si el usuario quiere registrar un gasto ('log'), consultar
@@ -84,14 +135,26 @@ class SentinelBrain:
         Fallback seguro: si la clasificación falla por cualquier motivo,
         devuelve {"intent": "log"} para no perder posibles registros de gastos.
         """
+        # 1. Intento rápido sin API
+        fast_intent = self._keyword_classify_intent(user_message)
+        if fast_intent:
+            return {"intent": fast_intent}
+
+        # 2. Si es dudoso, delegar en Gemini
         try:
             instructions = self._load_prompt("query_prompt.txt")
             instructions = self._inject_date(instructions)
             prompt = f"{instructions}\n\n--- MENSAJE DEL USUARIO ---\n{user_message}"
-            response = self._call_api(prompt)
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                )
+            )
             return json.loads(response.text)
         except Exception as e:
-            print(f"❌ Error clasificando intención: {e}")
+            print(f"❌ Error clasificando intención con Gemini: {e}")
             return {"intent": "log"}  # Fallback: nunca perder un posible gasto
 
     # ─────────────────────────────────────────────────────────────────────────
