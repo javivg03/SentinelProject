@@ -509,8 +509,8 @@ async def handle_document(
 # 5. REGISTRO DE HANDLERS
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def post_init(app) -> None:
-    """Registra todos los handlers tras inicializar la aplicación de PTB."""
+def register_handlers(app) -> None:
+    """Registra todos los handlers en la aplicación de PTB."""
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
@@ -519,48 +519,88 @@ async def post_init(app) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 6. SERVIDOR DE HEALTH CHECK (para ping externo en Render)
+# 6. ARRANQUE — Webhook personalizado con Health Check en /
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def health_check(request) -> web.Response:
+async def run_webhook_server(ptb_app, port: int, webhook_url: str) -> None:
     """
-    Endpoint HTTP GET / que responde 200 OK.
-    Permite que UptimeRobot, cron-job.org y Render marquen el servicio
-    como "activo" sin errores 404.
+    Servidor de producción: aiohttp como servidor HTTP principal.
+
+    En lugar de usar run_webhook() de PTB (que no permite añadir rutas
+    personalizadas en v22), gestionamos nuestro propio servidor aiohttp:
+    - POST /webhook → recibe updates de Telegram y los pasa a PTB
+    - GET  /        → responde 200 OK para UptimeRobot y cron-job.org
+
+    Esto nos da control total del servidor sin depender de parámetros
+    privados o no documentados de la librería.
     """
-    return web.Response(text="Sentinel está activo ✅")
+
+    async def telegram_webhook(request: web.Request) -> web.Response:
+        """Recibe el update de Telegram y lo inyecta en la cola de PTB."""
+        data = await request.json()
+        update = Update.de_json(data, ptb_app.bot)
+        await ptb_app.process_update(update)
+        return web.Response(text="OK")
+
+    async def health_check(request: web.Request) -> web.Response:
+        """Responde 200 OK para mantener el servicio activo en Render."""
+        return web.Response(text="Sentinel está activo ✅")
+
+    # Construir servidor aiohttp
+    aio_app = web.Application()
+    aio_app.router.add_post("/webhook", telegram_webhook)
+    aio_app.router.add_get("/", health_check)
+
+    # Inicializar PTB y registrar el webhook en la API de Telegram
+    await ptb_app.initialize()
+    await ptb_app.start()
+    await ptb_app.bot.set_webhook(
+        url=webhook_url,
+        drop_pending_updates=True,
+    )
+    logger.info(f"🔗 Webhook registrado en Telegram: {webhook_url}")
+
+    # Arrancar servidor HTTP
+    runner = web.AppRunner(aio_app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.info(f"🌐 Servidor HTTP escuchando en puerto {port}")
+
+    try:
+        # Mantener el proceso vivo indefinidamente
+        await asyncio.Event().wait()
+    finally:
+        logger.info("🛑 Apagando Sentinel...")
+        await ptb_app.stop()
+        await ptb_app.shutdown()
+        await runner.cleanup()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 7. ARRANQUE
+# 7. PUNTO DE ENTRADA
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     persistence = PicklePersistence(filepath="sentinel_data.pickle")
-    app = ApplicationBuilder().token(TOKEN).persistence(persistence).build()
-    app.post_init = post_init
+    ptb_app = ApplicationBuilder().token(TOKEN).persistence(persistence).build()
+    register_handlers(ptb_app)
 
     if RENDER_URL:
-        # ── PRODUCCIÓN (Render): Webhook + Health Check ──────────────────
-        # PTB levanta el servidor en el puerto $PORT con run_webhook().
-        # Añadimos la ruta / para responder 200 OK a los pings de UptimeRobot.
+        # ── PRODUCCIÓN (Render): Servidor aiohttp con webhook + health check
         logger.info(f"🌐 Iniciando en modo WEBHOOK → {RENDER_URL}/webhook")
-
-        aio_app = web.Application()
-        aio_app.router.add_get("/", health_check)
-
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=int(os.environ.get("PORT", 10000)),
-            url_path="webhook",
-            webhook_url=f"{RENDER_URL}/webhook",
-            drop_pending_updates=True,
-            webserver=aio_app,
+        PORT = int(os.environ.get("PORT", 10000))
+        asyncio.run(
+            run_webhook_server(
+                ptb_app=ptb_app,
+                port=PORT,
+                webhook_url=f"{RENDER_URL}/webhook",
+            )
         )
     else:
-        # ── DESARROLLO LOCAL: Polling ────────────────────────────────────
+        # ── DESARROLLO LOCAL: Polling (no requiere URL pública)
         logger.info("💻 Iniciando en modo POLLING (desarrollo local).")
         try:
-            app.run_polling(drop_pending_updates=True)
+            ptb_app.run_polling(drop_pending_updates=True)
         except KeyboardInterrupt:
             pass
