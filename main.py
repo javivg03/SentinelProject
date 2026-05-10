@@ -154,7 +154,7 @@ async def handle_financial_question(
         return
 
     answer = brain.answer_financial_question(budget_data, user_question)
-    await msg.edit_text(answer)
+    await msg.edit_text(answer, parse_mode=ParseMode.HTML)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
