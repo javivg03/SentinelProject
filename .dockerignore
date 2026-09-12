@@ -1,0 +1,30 @@
+# Entorno virtual y control de versiones — nunca deben entrar en la imagen
+.venv/
+venv/
+env/
+.git/
+.github/
+
+# Secretos — defensa en profundidad: aunque ya están en .gitignore, si
+# alguien construye la imagen en local no deben poder colarse en la imagen
+# vía "COPY . .".
+.env
+service_account.json
+
+# Cache y artefactos de Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Persistencia local de Telegram (se regenera en el contenedor)
+*.pickle
+
+# Tests y documentación — no se usan en tiempo de ejecución
+tests/
+docs/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

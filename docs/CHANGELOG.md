@@ -5,6 +5,31 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es/1.0.0/).
 
 ---
 
+## [Sin publicar] — 2026-09-12
+
+### 🔒 Seguridad
+- **Control de acceso por `chat_id`**: Sentinel ahora rechaza (fail-closed) cualquier mensaje que no venga del `ALLOWED_CHAT_ID` configurado. Antes el bot no tenía ningún control de acceso y cualquier usuario que descubriera su username en Telegram podía leer patrimonio/ingresos o escribir en el Sheet.
+- **Eliminado path traversal en subida de documentos**: el nombre de archivo temporal ya no se construye con el `file_name` crudo enviado por Telegram; se usa un nombre generado con `uuid4()` en el directorio temporal del sistema.
+- **Scope de Google reducido**: la cuenta de servicio pasa de `drive` (acceso a todo el Drive) a `drive.file` (mínimo privilegio: solo el Sheet compartido explícitamente).
+
+### 🛠 Corregido
+- **Catálogo de categorías desincronizado en `system_prompt.txt`**: "Alcohol", "Suscripción Disney" y "Farmacia" no existían en la lista estricta de categorías permitidas (recurrencia del mismo fallo del reto #10 de `CHALLENGES.md`). Ahora las reglas de inferencia usan exactamente los nombres de la lista estricta ("Tomar algo", "Suscripciones", "Farmacia / Salud").
+- **Log de auditoría con nombres inconsistentes**: `log_expense`/`batch_log_expenses` ahora resuelven siempre el nombre canónico de la categoría (tal como aparece en el Sheet) antes de escribir en `Transacciones`, sin importar si la categoría vino de Gemini, un alias o un botón manual con una etiqueta distinta.
+- **Errores de lectura de Sheets confundidos con datos reales en cero**: los métodos de `SheetsConnector` ahora devuelven una señal explícita de error (`{"error": ...}` / `None`) en vez de `0.0`/`{}`/`[]`, y `brain.format_query_response` distingue "no pude leer tus datos" de "el valor real es 0".
+- **Fallback de mes fuera de rango**: `_get_month_col`/`_get_month_idx` (unificados en `_parse_month`) validan que el mes esté entre 1 y 12; antes un mes inválido caía silenciosamente en una columna fija arbitraria en vez del mes actual.
+- **Condición de carrera en escrituras concurrentes**: se añadió un `asyncio.Lock` en `main.py` para serializar todas las escrituras a Google Sheets (relevante en modo webhook, donde `aiohttp` puede procesar updates en paralelo).
+
+### ✨ Añadido
+- `_validate_matrix_layout()`: aviso no fatal en logs si una fila fija (`ROW_*`) deja de coincidir con la etiqueta esperada en el Sheet (detecta cambios de estructura hechos a mano).
+- Regex del `DataSanitizer` reforzadas: IBAN y teléfono con espacios/prefijo internacional, tarjetas American Express (4-6-5) y tarjetas sin separadores.
+- Tests nuevos: `tests/test_main.py` (autorización) y cobertura de `log_expense`, `batch_log_expenses` y `_parse_month` en `tests/test_sheets_logic.py` (antes sin ningún test).
+- **`.dockerignore`**: el build de Docker enviaba `.venv/` completo (359 MB) como contexto y lo copiaba dentro de la imagen final vía `COPY . .`; también existía el riesgo de que `.env`/`service_account.json` acabaran horneados en la imagen si se construía en local. Verificado con un build real: el contexto pasó de 346 MB/57s a 1 KB/instantáneo, y la imagen final sigue funcionando de punta a punta (Sheets + Gemini + auth).
+
+### 🧹 Eliminado
+- **`bank_connector.py`**: código muerto documentado (integración PSD2/Open Banking deshabilitada), no se importaba en ningún otro módulo.
+- **`build-essential` del `Dockerfile`**: verificado con un build real que todas las dependencias de `requirements.txt` instalan como *wheels* precompilados en `python:3.11-slim`; no hace falta compilador C en la imagen.
+- **Versiones de `requirements.txt` fijadas** a las probadas en CI/tests (antes sin pin, riesgo de romperse con una actualización silenciosa de alguna dependencia).
+
 ## [0.6.0] — 2026-05-10
 
 ### ✨ Añadido

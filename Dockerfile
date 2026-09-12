@@ -7,10 +7,10 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Instalamos dependencias necesarias para algunas librerías de Python
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
+# Todas las dependencias de requirements.txt instalan wheels precompilados
+# para linux/amd64 (verificado con build real) — no hace falta un
+# compilador C en la imagen final, lo que la deja más ligera y rápida de
+# construir.
 
 # Instalamos los requerimientos
 COPY requirements.txt .
