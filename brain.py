@@ -233,6 +233,15 @@ class SentinelBrain:
         Construye la respuesta en HTML de Telegram a partir EXCLUSIVAMENTE
         de los datos numéricos extraídos de Google Sheets.
         """
+        # Distingue "no hay dato real" (dict/lista vacíos) de "no se pudo
+        # leer Sheets" (None, o dict con clave "error"): un fallo técnico no
+        # debe presentarse como si el saldo real fuera 0,00€.
+        if data is None or (isinstance(data, dict) and data.get("error")):
+            return (
+                "⚠️ No pude leer tus datos ahora mismo "
+                "(error de conexión con Google Sheets). Inténtalo de nuevo en unos segundos."
+            )
+
         if not data:
             return "⚠️ No encontré datos para esa consulta en tu hoja de cálculo."
 

@@ -22,11 +22,21 @@ class DataSanitizer:
     # Cada patrón está compilado una sola vez al instanciar la clase
     # para máximo rendimiento en procesamiento de documentos largos.
     PATTERNS = {
-        "IBAN": re.compile(r"[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}([A-Z0-9]?){0,16}"),
-        "CREDIT_CARD": re.compile(r"\b(?:\d{4}[ -]?){3}\d{4}\b"),
+        # IBAN europeo, con o sin espacios entre los grupos de 4 caracteres
+        # (los bancos casi siempre los exportan así: "ES50 2100 ... ").
+        "IBAN": re.compile(r"\b[A-Z]{2}\d{2}(?:[ -]?[A-Z0-9]{4}){2,7}\b"),
+        # Tarjetas Visa/Mastercard (4-4-4-4) y American Express (4-6-5),
+        # con o sin separadores.
+        "CREDIT_CARD": re.compile(
+            r"\b(?:\d{4}[ -]?){3}\d{4}\b|\b3[47]\d{2}[ -]?\d{6}[ -]?\d{5}\b"
+        ),
         "EMAIL": re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"),
         "DNI": re.compile(r"\b\d{8}[A-Za-z]\b"),
-        "PHONE": re.compile(r"\b(\+34|0034)?[6789]\d{8}\b"),
+        # Móviles españoles, con o sin espacios/prefijo internacional.
+        # (?<!\d) en vez de \b al inicio: "\b" no cruza el espacio antes de
+        # un "+", así que sin este cambio el prefijo "+34" quedaba fuera del
+        # redactado.
+        "PHONE": re.compile(r"(?<!\d)(?:\+34[ ]?|0034[ ]?)?[6789]\d{2}(?:[ ]?\d{2}){3}\b"),
     }
 
     def clean(self, text: str) -> str:

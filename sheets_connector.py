@@ -159,6 +159,11 @@ class SheetsConnector:
             # ── 6. Cargar límites de presupuesto para alertas ────────────
             self.budget_limits = self._load_budget_limits()
 
+            # ── 7. Verificar que las filas fijas (ROW_*) siguen alineadas ──
+            # con la estructura real del Sheet. No es fatal: solo avisa, para
+            # que un cambio manual en el Excel no produzca ceros silenciosos.
+            self._validate_matrix_layout()
+
             print(
                 f"✅ Conexión establecida con '{self.spreadsheet.title}'. "
                 f"Pestaña matriz: '{self.matrix_sheet.title}'. "
@@ -181,6 +186,11 @@ class SheetsConnector:
         """
         self.category_map = {}
         self.category_display_names = {}
+        # Fila -> nombre canónico tal cual aparece en el Sheet. Se usa para
+        # que el log de auditoría ('Transacciones') siempre escriba el mismo
+        # nombre de categoría sin importar si vino de Gemini, de un alias o
+        # de un botón manual con una etiqueta distinta.
+        self.row_display_name = {}
 
         try:
             # Leemos las primeras 50 filas de la columna B (Concepto)
@@ -196,6 +206,7 @@ class SheetsConnector:
                 clean_key = _normalize_text(concept)
                 self.category_map[clean_key] = row_idx
                 self.category_display_names[clean_key] = concept
+                self.row_display_name[row_idx] = concept
 
             # Mapear sinónimos / alias habituales para mayor tolerancia
             synonyms = {
@@ -301,30 +312,37 @@ class SheetsConnector:
         except (ValueError, TypeError):
             return 0.0
 
-    def _get_month_col(self, fecha_str: str = None) -> int:
-        """Devuelve el número de columna (1-indexed) correspondiente al mes."""
+    def _parse_month(self, fecha_str: str = None) -> int:
+        """
+        Extrae un mes válido (1-12) de una fecha 'YYYY-MM' o 'YYYY-MM-DD'.
+        Si la fecha es inválida, no es parseable o el mes está fuera de
+        rango (ej. Gemini alucina un "13"), cae de forma explícita al mes
+        actual en vez de a una columna fija arbitraria, y deja aviso en logs
+        para que el desvío sea visible en vez de silencioso.
+        """
         if fecha_str:
             try:
-                # Extraer mes de formato YYYY-MM-DD o YYYY-MM
                 parts = str(fecha_str).split("-")
                 if len(parts) >= 2:
                     month = int(parts[1])
-                    return self.month_columns.get(month, 11)
+                    if 1 <= month <= 12:
+                        return month
+                    print(
+                        f"⚠️ Mes fuera de rango en fecha '{fecha_str}' ({month}); "
+                        "usando el mes actual."
+                    )
             except (IndexError, ValueError):
-                pass
-        now_month = datetime.datetime.now().month
-        return self.month_columns.get(now_month, now_month + 2)
+                print(f"⚠️ No se pudo interpretar la fecha '{fecha_str}'; usando el mes actual.")
+        return datetime.datetime.now().month
+
+    def _get_month_col(self, fecha_str: str = None) -> int:
+        """Devuelve el número de columna (1-indexed) correspondiente al mes."""
+        month = self._parse_month(fecha_str)
+        return self.month_columns.get(month, month + 2)
 
     def _get_month_idx(self, fecha_str: str = None) -> int:
         """Devuelve el número del mes (1 a 12)."""
-        if fecha_str:
-            try:
-                parts = str(fecha_str).split("-")
-                if len(parts) >= 2:
-                    return int(parts[1])
-            except (IndexError, ValueError):
-                pass
-        return datetime.datetime.now().month
+        return self._parse_month(fecha_str)
 
     def _today(self) -> str:
         """Devuelve la fecha actual en formato YYYY-MM-DD."""
@@ -343,6 +361,59 @@ class SheetsConnector:
 
         # Si no se encuentra, buscar fila 'Otros'
         return self.category_map.get("otros", 32)
+
+    def _canonical_category_name(self, category: str) -> str:
+        """
+        Devuelve el nombre de categoría EXACTO tal como aparece en el Sheet,
+        resolviendo alias y coincidencias difusas (ej. "Farmacia" -> "Farmacia
+        / Salud", "Suscripción Disney" -> "Suscripciones"). Se usa para que
+        la matriz y el log de auditoría 'Transacciones' registren siempre el
+        mismo nombre, sin importar si la categoría vino de Gemini, de un
+        alias o de un botón manual con una etiqueta distinta.
+        """
+        row = self._find_row_for_category(category)
+        return self.row_display_name.get(row, category)
+
+    def _validate_matrix_layout(self) -> None:
+        """
+        Comprueba que las filas fijas (ROW_*) siguen apuntando a las
+        etiquetas esperadas en '📊 Registro Mensual'. Si alguien inserta o
+        borra una fila a mano en el Excel, estas constantes quedarían
+        desalineadas y el bot leería/escribiría silenciosamente en la celda
+        equivocada. Esto no es fatal (no interrumpe el arranque): solo deja
+        un aviso claro en los logs para que el desglose se note de inmediato
+        en vez de manifestarse como un "0,00€" inexplicable.
+        """
+        expected_keywords = {
+            self.ROW_TOTAL_INGRESOS: "ingreso",
+            self.ROW_TOTAL_VITALES: "vital",
+            self.ROW_TOTAL_OCIO: "ocio",
+            self.ROW_TOTAL_INVERSION: "inversion",
+            self.ROW_AHORRO_NETO: "ahorro",
+            self.ROW_TASA_AHORRO: "tasa",
+            self.ROW_PATRIMONIO_TOTAL: "patrimonio",
+        }
+        try:
+            col_a = self.matrix_sheet.col_values(1)
+            col_b = self.matrix_sheet.col_values(2)
+            for row_idx, keyword in expected_keywords.items():
+                idx = row_idx - 1
+                label = " ".join(
+                    [
+                        col_a[idx] if idx < len(col_a) else "",
+                        col_b[idx] if idx < len(col_b) else "",
+                    ]
+                )
+                if keyword not in _normalize_text(label):
+                    print(
+                        f"⚠️ ALERTA DE INTEGRIDAD: la fila {row_idx} de "
+                        f"'{self.matrix_sheet.title}' no contiene '{keyword}' "
+                        f"(contenido leído: '{label.strip() or 'vacío'}'). "
+                        "La estructura del Sheet pudo cambiar — revisa las "
+                        "constantes ROW_* en sheets_connector.py."
+                    )
+        except Exception as e:
+            print(f"⚠️ No se pudo validar la estructura de la matriz: {e}")
 
     # ─────────────────────────────────────────────────────────────────────────
     # ESCRITURA — log_expense y batch_log_expenses (OPCIÓN B)
@@ -375,7 +446,11 @@ class SheetsConnector:
             timestamp = fecha if fecha else self._today()
 
             target_row = self._find_row_for_category(category)
-            clean_cat = _normalize_text(category)
+            # Nombre canónico exacto del Sheet (evita que "Farmacia" y
+            # "Farmacia / Salud", o "Suscripción Disney" y "Suscripciones",
+            # convivan como etiquetas distintas en el log de auditoría).
+            canonical_cat = self.row_display_name.get(target_row, category)
+            clean_cat = _normalize_text(canonical_cat)
 
             # Determinar tipo
             if not tipo:
@@ -392,7 +467,7 @@ class SheetsConnector:
             if self.transactions_sheet:
                 try:
                     self.transactions_sheet.append_row(
-                        [timestamp, concept, category, amount_to_add, tipo]
+                        [timestamp, concept, canonical_cat, amount_to_add, tipo]
                     )
                 except Exception as e_log:
                     print(f"⚠️ Error añadiendo fila a Transacciones: {e_log}")
@@ -402,15 +477,15 @@ class SheetsConnector:
             budget_limit = self.budget_limits.get(clean_cat)
             if budget_limit and new_total > budget_limit:
                 budget_alert = (
-                    f"⚠️ <b>Atención: Presupuesto excedido en {category}</b>\n"
+                    f"⚠️ <b>Atención: Presupuesto excedido en {canonical_cat}</b>\n"
                     f"Llevas <b>{new_total:.2f}€</b> gastados de <b>{budget_limit:.2f}€</b> presupuestados "
                     f"({(new_total / budget_limit) * 100:.0f}%)."
                 )
 
-            print(f"💰 Registro exitoso: {category} ({month_name}) | {current_cell_val}€ → {new_total}€")
+            print(f"💰 Registro exitoso: {canonical_cat} ({month_name}) | {current_cell_val}€ → {new_total}€")
             return {
                 "success": True,
-                "category": category,
+                "category": canonical_cat,
                 "amount": amount_to_add,
                 "new_total": new_total,
                 "month_name": month_name,
@@ -442,9 +517,10 @@ class SheetsConnector:
                 amt = abs(self._clean_value(item.get("importe", 0)))
                 tipo = item.get("tipo", "GASTO")
 
-                rows_to_append.append([f, c, cat, amt, tipo])
-
                 target_row = self._find_row_for_category(cat)
+                canonical_cat = self.row_display_name.get(target_row, cat)
+                rows_to_append.append([f, c, canonical_cat, amt, tipo])
+
                 month_col = self._get_month_col(f)
                 key = (target_row, month_col)
                 aggregated[key] = aggregated.get(key, 0.0) + amt
@@ -503,7 +579,7 @@ class SheetsConnector:
             }
         except Exception as e:
             print(f"❌ Error en get_category_spending: {e}")
-            return {"category": category, "spent": 0.0, "month_name": "Mes actual", "budget": None}
+            return {"error": str(e)}
 
     def get_income_breakdown(self, month: int = None) -> dict:
         """
@@ -539,7 +615,7 @@ class SheetsConnector:
             }
         except Exception as e:
             print(f"❌ Error en get_income_breakdown: {e}")
-            return {}
+            return {"error": str(e)}
 
     def get_monthly_summary(self, month: int = None) -> dict:
         """
@@ -582,7 +658,7 @@ class SheetsConnector:
             }
         except Exception as e:
             print(f"❌ Error en get_monthly_summary: {e}")
-            return {}
+            return {"error": str(e)}
 
     def get_patrimony(self) -> dict:
         """
@@ -627,10 +703,10 @@ class SheetsConnector:
             }
         except Exception as e:
             print(f"❌ Error en get_patrimony: {e}")
-            return {}
+            return {"error": str(e)}
 
-    def get_recent_transactions(self, limit: int = 5) -> list:
-        """Devuelve las últimas N transacciones del log de auditoría."""
+    def get_recent_transactions(self, limit: int = 5) -> list | None:
+        """Devuelve las últimas N transacciones del log de auditoría (None si falla la lectura)."""
         if not self.transactions_sheet:
             return []
         try:
@@ -650,10 +726,10 @@ class SheetsConnector:
             ]
         except Exception as e:
             print(f"❌ Error en get_recent_transactions: {e}")
-            return []
+            return None
 
-    def get_top_categories(self, month: int = None, limit: int = 5) -> list:
-        """Devuelve las categorías con mayor gasto en el mes indicado."""
+    def get_top_categories(self, month: int = None, limit: int = 5) -> list | None:
+        """Devuelve las categorías con mayor gasto en el mes indicado (None si falla la lectura)."""
         try:
             month = month or datetime.datetime.now().month
             month_col = self.month_columns.get(month, month + 2)
@@ -674,7 +750,7 @@ class SheetsConnector:
             return gastos[:limit]
         except Exception as e:
             print(f"❌ Error en get_top_categories: {e}")
-            return []
+            return None
 
     def get_monthly_notes(self, month: int = None) -> dict:
         """
@@ -693,7 +769,7 @@ class SheetsConnector:
             }
         except Exception as e:
             print(f"❌ Error en get_monthly_notes: {e}")
-            return {"month": month, "month_name": "Mes actual", "notes": ""}
+            return {"error": str(e)}
 
     def append_monthly_note(self, note_text: str, month: int = None) -> dict:
         """
