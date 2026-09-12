@@ -1,125 +1,154 @@
-# 🛡️ Sentinel: AI-Powered Financial Auditor
+# 🛡️ Sentinel: AI-Powered Financial Auditor & Telegram Bot
 
-Sentinel es un ecosistema de automatización financiera personal que integra la potencia de **Google Gemini AI** con la ubicuidad de **Telegram** y la flexibilidad de **Google Sheets**.
+[![Python Version](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
+[![Telegram Bot API](https://img.shields.io/badge/Telegram%20Bot-PTB%20v22-blue.svg)](https://python-telegram-bot.org/)
+[![Google Gemini AI](https://img.shields.io/badge/AI%20Engine-Gemini%202.5%20Flash-orange.svg)](https://ai.google.dev/)
+[![Google Sheets API](https://img.shields.io/badge/Storage-Google%20Sheets%20API-green.svg)](https://developers.google.com/sheets/api)
+[![Render Deploy](https://img.shields.io/badge/Deploy-Render%20Web%20Service-black.svg)](https://render.com)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A diferencia de las aplicaciones de finanzas tradicionales, Sentinel utiliza **Procesamiento de Lenguaje Natural (NLP)** para permitir que el usuario registre sus movimientos financieros mediante lenguaje cotidiano, y un **pipeline de ingestión de documentos** para procesar masivamente los extractos bancarios exportados desde la app del banco.
+**Sentinel** es un asistente financiero personal y auditor técnico para Telegram. Integra la capacidad de razonamiento y procesamiento de lenguaje natural de **Google Gemini AI** con la infraestructura analítica de **Google Sheets**, diseñado bajo principios rigurosos de **Privacidad por Diseño (Privacy by Design)**, **Zero-Trust** e **Integridad Determinista de Datos**.
 
----
-
-## 🌟 Características Principales
-
-- **Comprensión Contextual**: Procesa mensajes complejos como _"He cobrado la nómina y me he gastado 12€ en gasolina"_ en una sola interacción, manteniendo historial de conversación para completar información incompleta.
-- **Categorización Inteligente**: Motor de IA (Gemini 2.5 Flash) configurado para mapear entradas de usuario y conceptos bancarios contra un presupuesto estructurado preexistente, con reglas de inferencia explícitas.
-- **Ingestión de Documentos Bancarios (Anti-PSD2)**: El bot acepta archivos Excel (`.xls`, `.xlsx`) y PDF adjuntados directamente en Telegram. Procesa masivamente extractos de meses completos sin depender de conexiones bancarias directas bloqueadas por la normativa PSD2.
-- **Conciencia de Fechas**: Cada transacción se registra en la columna del mes que le corresponde según su fecha real, no según el mes actual.
-- **Escritura Atómica en Google Sheets**: El sistema no solo anota; busca la intersección exacta entre Categoría y Mes, acumulando valores con una sola llamada API por lote (batch writing).
-- **Seguridad "Zero-Trust"**: Sanitización de datos sensibles (IBAN, DNI, tarjetas, teléfonos) antes de que la información salga del servidor hacia las APIs de terceros. Los archivos bancarios se eliminan del disco inmediatamente tras su procesamiento.
-- **Soporte Multi-banco**: Compatible con el formato `.xls` de **Unicaja** y el PDF de **Trade Republic**. Arquitectura extensible para nuevos bancos.
+El proyecto sustituye la fricción de los Excels manuales y los riesgos de las apps tradicionales mediante un flujo conversacional instantáneo: registra gastos en lenguaje natural, audita extractos bancarios masivos y responde consultas sobre presupuesto y patrimonio con **cero alucinaciones numéricas**.
 
 ---
 
-## ⚠️ Contexto: Por qué no usamos Open Banking (PSD2)
+## 🌟 Principios de Arquitectura e Ingeniería
 
-El proyecto comenzó con la intención de conectarse directamente a los bancos en tiempo real mediante APIs de Open Banking (Tink, GoCardless). Esta integración fue bloqueada por la **normativa europea PSD2**, que requiere una licencia AISP (Account Information Service Provider) — reservada a entidades financieras reguladas — para acceder a datos bancarios reales de terceros. El módulo `bank_connector.py` se conserva como testimonio del trabajo realizado y la comprensión de la normativa. Ver `docs/CHALLENGES.md` para el análisis técnico completo.
+### 1. Consultas Deterministas (Anti-Alucinación Financiera)
+En finanzas personales, **una IA generativa nunca debe inventar, redondear o calcular cifras de forma no supervisada**. Sentinel implementa un patrón estricto de **Tool Calling / Function Dispatch**:
+- **Gemini actúa únicamente como enrutador semántico**: clasifica la intención (`category_total`, `monthly_summary`, `patrimony`, `top_categories`) y extrae los parámetros (categoría, mes).
+- **Python ejecuta la lectura determinista en Google Sheets**: accede a la celda exacta o al acumulado calculado por la hoja de cálculo.
+- **Formateo controlado**: El bot inyecta la cifra real obtenida en la plantilla de respuesta de Telegram. Cero riesgo de alucinación.
+
+### 2. Arquitectura de Registro Híbrido (Matriz + Auditoría)
+Para mantener la simplicidad analítica sin perder trazabilidad:
+- **Matriz Mensual (`📊 Registro Mensual`)**: El bot acumula el gasto en la celda correspondiente a `(Categoría, Mes)`. Todas las fórmulas de la hoja (`Total Gastos Vitales`, `Total Ocio`, `Ahorro Neto`, `Tasa de Ahorro`) se recalculan de forma nativa e inmediata en Google Drive.
+- **Log de Auditoría (`Transacciones`)**: En paralelo, cada movimiento individual se anota con `[Fecha, Concepto, Categoría, Importe, Tipo]` para conservar el histórico detallado.
+
+### 3. Patrimonio Desacoplado y Resiliente
+- La pestaña **`🏦 Patrimonio y Objetivos`** se calcula al 100% mediante fórmulas nativas de Google Sheets enlazadas al histórico mensual.
+- **El bot nunca escribe en Patrimonio**: reduce la superficie de fallo, garantiza que los datos perduren aunque el bot esté inactivo y evita que un error de software corrompa el cálculo patrimonial.
+
+### 4. Privacidad por Diseño (Zero-Trust & Sanitización)
+Diseñado con formación en Derecho, Ciberseguridad y Protección de Datos:
+- **Data Sanitizer**: Antes de enviar cualquier mensaje o documento a la API de Gemini, un filtro regex redacta de forma irreversible datos sensibles como IBANs, números de tarjetas de crédito, correos electrónicos, DNIs y números de teléfono (`[REDACTED]`).
+- **Eliminación Efímera**: Los extractos bancarios subidos en Telegram se procesan en memoria / directorio temporal y se destruyen inmediatamente tras su inserción en Google Sheets.
+- **Gestión de Secretos**: Ninguna credencial o clave vive en el código fuente; todo se inyecta por variables de entorno y archivos ignorados en git.
+
+### 5. Alta Disponibilidad y Mitigación del Cold-Start
+- En la capa gratuita de hosting (Render), los contenedores hibernan tras 15 minutos de inactividad.
+- Sentinel expone un endpoint HTTP de salud (`GET /`) gestionado con `aiohttp` y cuenta con un **sistema keep-alive dual** (cron periódico cada 10 minutos vía `cron-job.org` y flujo de trabajo en **GitHub Actions**) que mantiene el bot despierto 24/7 con tiempos de respuesta en Telegram inferiores a 2 segundos.
 
 ---
 
 ## 🛠️ Stack Tecnológico
 
-- **Core**: Python 3.12
-- **IA**: Google Gemini 2.5 Flash (NLP Engine)
-- **Interface**: Telegram Bot API (vía `python-telegram-bot` v20+)
-- **Infraestructura Cloud**: Google Cloud Platform (Sheets & Drive APIs)
-- **Despliegue**: Web Service en Render (24/7 Uptime, auto-deploy desde GitHub)
-- **Parsing de documentos**: `pdfplumber` (PDF), `pandas + xlrd` (Excel .xls)
+| Componente | Tecnología | Rol |
+|---|---|---|
+| **Lenguaje** | Python 3.11 / 3.12 | Lógica del sistema y motor asíncrono |
+| **Motor de IA** | Google Gemini 2.5 Flash (`google-genai` SDK) | Clasificación de intenciones, extracción de entidades y parsing de tickets |
+| **Interfaz de Usuario** | Telegram Bot API (`python-telegram-bot` v22) | Entrada de mensajes, teclado interactivo inline y notificaciones |
+| **Servidor HTTP** | `aiohttp` | Gestión del webhook de Telegram y health check keep-alive |
+| **Almacenamiento** | Google Sheets API (`gspread` + Service Account) | Base de datos analítica matricial y log de transacciones |
+| **Ingestión Bancaria** | `pdfplumber`, `pandas`, `openpyxl`, `xlrd` | Extracción de datos de extractos en PDF y Excel binarios |
+| **Resiliencia** | `tenacity` | Reintentos automáticos con retroceso exponencial ante rate limits de API |
+| **CI / CD** | GitHub Actions & Render Web Service | Despliegue continuo automatizado y monitor de keep-alive |
 
 ---
 
-## 📁 Estructura del Proyecto
+## 📁 Estructura del Repositorio
 
-```
+```text
 SentinelProject/
-├── main.py                  # Orquestador principal (Telegram bot)
-├── brain.py                 # Motor de IA (interfaz con Gemini)
-├── sheets_connector.py      # Conector de Google Sheets
-├── document_parser.py       # Extractor de Excel y PDF bancarios
-├── sanitizer.py             # Filtro de datos sensibles (Zero-Trust)
-├── bank_connector.py        # ⚠️ DEPRECATED — Registro histórico de integración PSD2
-├── requirements.txt         # Dependencias del proyecto
-├── .env                     # Secretos locales (NO subir a Git)
-├── service_account.json     # Credenciales Google (NO subir a Git)
+├── .github/
+│   └── workflows/
+│       └── keep_alive.yml       # Ping programado cada 10 min para evitar cold-start
 ├── prompts/
-│   └── system_prompt.txt    # Instrucciones del sistema para Gemini AI
+│   ├── system_prompt.txt        # Reglas de categorización e inferencia para Gemini
+│   └── query_prompt.txt         # Clasificador estructurado de intenciones y parámetros
+├── tests/
+│   ├── test_brain.py            # Tests de inferencia de IA y formato determinista
+│   ├── test_sanitizer.py        # Tests del filtro de datos personales (Zero-Trust)
+│   └── test_sheets_logic.py     # Tests de normalización y parsing de moneda europea
+├── main.py                      # Orquestador principal, webhook y handlers de Telegram
+├── brain.py                     # Interfaz con Gemini y formateador de consultas
+├── sheets_connector.py          # Conector matricial y determinista de Google Sheets
+├── sanitizer.py                 # Sanitizador de privacidad (IBAN, DNI, tarjetas)
+├── document_parser.py           # Parser de extractos bancarios (.xls, .xlsx, .pdf)
+├── bank_connector.py            # ⚠️ Histórico: análisis normativo PSD2 / Open Banking
+├── requirements.txt             # Dependencias del proyecto
+├── Dockerfile                   # Contenedor para despliegue en Render
 └── docs/
-    ├── ARCHITECTURE.md      # Diagrama y descripción de módulos
-    ├── CHANGELOG.md         # Historial de cambios por versión
-    └── CHALLENGES.md        # Retos técnicos y cómo se resolvieron
+    ├── ARCHITECTURE.md          # Diagramas de flujo y arquitectura detallada
+    ├── CHANGELOG.md             # Histórico de versiones
+    └── CHALLENGES.md            # Desafíos técnicos (PSD2, límites de cuota, encoding)
 ```
 
 ---
 
-## 🚀 Inicio Rápido en 4 Pasos
+## 🚀 Puesta en Marcha Local
 
-### 1. Clonar e instalar dependencias
-
+### 1. Clonar el repositorio y configurar el entorno
 ```bash
 git clone https://github.com/javivg03/SentinelProject.git
 cd SentinelProject
 python -m venv .venv
-.\.venv\Scripts\activate       # Windows
+.\.venv\Scripts\activate       # En Windows
 pip install -r requirements.txt
 ```
 
-### 2. Configurar secretos locales
-
-Crea un archivo `.env` en la raíz del proyecto:
-
+### 2. Configurar variables de entorno
+Crea un archivo `.env` en la raíz del proyecto (basado en `.env.example`):
 ```env
-TELEGRAM_TOKEN=tu_token_de_botfather
+TELEGRAM_TOKEN=tu_token_de_telegram_botfather
 GOOGLE_API_KEY=tu_api_key_de_google_ai_studio
-SPREADSHEET_ID=el_id_de_tu_google_sheet
+SPREADSHEET_ID=id_del_google_sheet
 ```
 
-Descarga tu `service_account.json` desde Google Cloud Console y colócalo en la raíz del proyecto.
+Coloca tu archivo `service_account.json` (cuenta de servicio con permisos de Editor en el Sheet) en la raíz del proyecto.
 
-### 3. Configurar Google Sheets
+### 3. Ejecutar suite de pruebas
+```bash
+pytest
+```
 
-Tu hoja debe tener:
-- **Hoja llamada `Presupuesto`**
-- **Fila 1**: Cabecera con los meses (`Enero`, `Febrero`, ..., `Diciembre`)
-- **Columna A**: Nombres de categorías exactos (ver `prompts/system_prompt.txt`)
-- La cuenta de servicio debe tener permisos de editor en el documento
-
-### 4. Ejecutar en local (desarrollo)
-
+### 4. Iniciar el bot en modo local (Polling)
 ```bash
 python main.py
 ```
-
-> ⚠️ **No ejecutar en local si Render está activo.** Dos instancias del mismo bot causan `telegram.error.Conflict`.
-
----
-
-## ☁️ Despliegue en Render (Producción)
-
-1. Conecta tu repositorio de GitHub a Render
-2. Crea un **Web Service** con comando de inicio: `python main.py`
-3. Añade las siguientes **Environment Variables** en el panel de Render:
-   - `TELEGRAM_TOKEN`
-   - `GOOGLE_API_KEY`
-   - `SPREADSHEET_ID`
-   - `GOOGLE_SERVICE_ACCOUNT_JSON` (contenido completo del JSON de la cuenta de servicio)
-   - `RENDER_EXTERNAL_URL` (Render la añade automáticamente)
-4. Activa **Auto-Deploy** para que cada `git push` actualice el bot automáticamente
+*(Si no se define `RENDER_EXTERNAL_URL`, el bot arranca automáticamente en modo Polling sin necesidad de configurar webhook).*
 
 ---
 
-## 📚 Documentación
+## 💬 Ejemplos de Interacción
 
-- [Arquitectura del Sistema](docs/ARCHITECTURE.md)
-- [Historial de Cambios](docs/CHANGELOG.md)
-- [Retos Técnicos y Soluciones](docs/CHALLENGES.md)
+### Registro de Gastos
+- **Usuario**: *"20€ en gasolina hoy"*
+- **Sentinel**:
+  > 💰 **Gasolina**
+  > 🏷️ Gasolina (Septiembre)
+  > 📉 20.00€ (acumulado mes: 60.00€)
+  > ✅ Movimiento registrado en matriz y log.
+
+### Consulta de Categoría
+- **Usuario**: *"¿Cuánto llevo gastado en gasolina este mes?"*
+- **Sentinel**:
+  > 📊 **Gasto en Gasolina (Septiembre):** `60,00€`
+  > 🎯 *Presupuesto asignado: 110,00€ (55% consumido)*
+
+### Consulta de Patrimonio
+- **Usuario**: *"¿Cuál es mi patrimonio actual?"*
+- **Sentinel**:
+  > 🏦 **Patrimonio Total (Agosto):** `7.928,55€`
+  >
+  > • 🔒 **Cuenta Remunerada TR (2%):** 5.213,21€
+  > • 📈 **Fondo Fidelity MSCI World:** 1.541,92€
+  > • ₿ **Bitcoin (TR):** 218,60€
+  > • 💳 **Cuenta Unicaja (operativa):** 954,82€
 
 ---
 
-Desarrollado con 💙 como herramienta de auditoría financiera inteligente y proyecto de portfolio.
+## 📄 Licencia
+
+Distribuido bajo la Licencia MIT. Consulta `LICENSE` para más información.
