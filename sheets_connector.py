@@ -502,6 +502,42 @@ class SheetsConnector:
             print(f"❌ Error en get_category_spending: {e}")
             return {"category": category, "spent": 0.0, "month_name": "Mes actual", "budget": None}
 
+    def get_income_breakdown(self, month: int = None) -> dict:
+        """
+        Consulta determinista: devuelve el desglose de ingresos (Nómina, Otros, Regalos/Extras, Total)
+        para el mes indicado.
+        """
+        try:
+            month = month or datetime.datetime.now().month
+            month_col = self.month_columns.get(month, month + 2)
+            month_name = self.MONTH_NAMES[month - 1]
+
+            col_data = self.matrix_sheet.col_values(month_col)
+
+            def val_at(r):
+                idx = r - 1
+                return self._clean_value(col_data[idx]) if idx < len(col_data) else 0.0
+
+            nomina = val_at(5)
+            otros = val_at(6)
+            regalos = val_at(7)
+            total = val_at(8)
+
+            if total == 0.0 and (nomina > 0 or otros > 0 or regalos > 0):
+                total = round(nomina + otros + regalos, 2)
+
+            return {
+                "month": month,
+                "month_name": month_name,
+                "nomina": nomina,
+                "otros": otros,
+                "regalos_extras": regalos,
+                "total_ingresos": total,
+            }
+        except Exception as e:
+            print(f"❌ Error en get_income_breakdown: {e}")
+            return {}
+
     def get_monthly_summary(self, month: int = None) -> dict:
         """
         Consulta determinista: lee las filas de resumen calculadas por fórmulas

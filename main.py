@@ -128,7 +128,7 @@ MONTH_NAMES = {
 
 
 async def handle_financial_question(
-    update: Update, user_question: str, intent_data: dict = None
+    update: Update, user_question: str, intent_data: dict = None, context: ContextTypes.DEFAULT_TYPE = None
 ) -> None:
     """
     Ejecuta la consulta determinista en Google Sheets y devuelve la respuesta
@@ -142,10 +142,15 @@ async def handle_financial_question(
     category = intent_data.get("category")
 
     data = None
-    if query_type == "patrimony":
-        data = sheets.get_patrimony()
-    elif query_type == "category_total" and category:
+    # Si se especificó una categoría concreta (ej. Nómina, Gasolina), siempre priorizarla
+    if category:
         data = sheets.get_category_spending(category, month)
+        query_type = "category_total"
+    elif query_type == "income_breakdown" or ("desglos" in user_question.lower() and "ingres" in user_question.lower()):
+        data = sheets.get_income_breakdown(month)
+        query_type = "income_breakdown"
+    elif query_type == "patrimony":
+        data = sheets.get_patrimony()
     elif query_type in ("monthly_summary", "monthly_savings", "monthly_income"):
         data = sheets.get_monthly_summary(month)
     elif query_type == "top_categories":
@@ -153,16 +158,18 @@ async def handle_financial_question(
     elif query_type == "last_transactions":
         data = sheets.get_recent_transactions()
     else:
-        # Heurística si query_type vino genérico
-        if category:
-            data = sheets.get_category_spending(category, month)
-            query_type = "category_total"
-        else:
-            data = sheets.get_monthly_summary(month)
-            query_type = "monthly_summary"
+        data = sheets.get_monthly_summary(month)
+        query_type = "monthly_summary"
 
     answer = brain.format_query_response(query_type, data, user_question)
     await msg.edit_text(answer, parse_mode=ParseMode.HTML)
+
+    # Registrar en historial para permitir preguntas de seguimiento contextual ("Desglosado", "Solo nómina", etc.)
+    if context and "history" in context.user_data:
+        m_name = (sheets.MONTH_NAMES[month - 1] if month else "actual")
+        context.user_data["history"].append(f"Usuario: {user_question}")
+        context.user_data["history"].append(f"Sentinel: consulta {query_type} de {m_name}")
+        context.user_data["history"] = context.user_data["history"][-6:]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -236,15 +243,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         context.user_data["history"] = []
 
     clean_text = sanitizer.clean(raw_text)
+    history_str = "\n".join(context.user_data["history"])
 
-    # ── Paso 1: Clasificar intención ─────────────────────────────────────────
-    intent_data = brain.classify_intent(clean_text)
+    # ── Paso 1: Clasificar intención (usando historial para preguntas de seguimiento) ──
+    intent_data = brain.classify_intent(clean_text, history=history_str)
     intent = intent_data.get("intent", "log")
 
     # ── Paso 2: Enrutar según intención ─────────────────────────────────────
     if intent in ("query", "analysis"):
-        await handle_financial_question(update, clean_text, intent_data)
+        await handle_financial_question(update, clean_text, intent_data, context)
         return
+
 
     if intent == "unknown":
         await update.message.reply_text(

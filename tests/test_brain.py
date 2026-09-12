@@ -80,3 +80,23 @@ def test_deterministic_category_format(mock_client_cls):
     assert "Gasolina" in formatted
     assert "40,00€" in formatted
     assert "110,00€" in formatted
+
+
+@patch("google.genai.Client")
+def test_deterministic_income_breakdown(mock_client_cls):
+    mock_client_cls.return_value = MagicMock()
+    brain = SentinelBrain()
+
+    data = {
+        "month_name": "Agosto",
+        "nomina": 3692.16,
+        "otros": 235.50,
+        "regalos_extras": 10.00,
+        "total_ingresos": 3927.66,
+    }
+    formatted = brain.format_query_response("income_breakdown", data)
+    assert "3.692,16€" in formatted
+    assert "235,50€" in formatted
+    assert "10,00€" in formatted
+    assert "3.927,66€" in formatted
+

@@ -105,13 +105,13 @@ class SentinelBrain:
         # Si no tiene patrón evidente, delegar en Gemini
         return None
 
-    def classify_intent(self, user_message: str) -> dict:
+    def classify_intent(self, user_message: str, history: str = "") -> dict:
         """
         Determina si el usuario quiere registrar ('log') o consultar ('query').
         Para consultas, devuelve el desglose estructurado:
         {
             "intent": "query",
-            "query_type": "category_total|monthly_summary|monthly_savings|monthly_income|patrimony|top_categories|last_transactions",
+            "query_type": "category_total|income_breakdown|monthly_summary|monthly_savings|monthly_income|patrimony|top_categories|last_transactions",
             "category": str | None,
             "month": int | None
         }
@@ -120,11 +120,12 @@ class SentinelBrain:
         if fast_intent == "log":
             return {"intent": "log"}
 
-        # Si es consulta o texto libre, pedir a Gemini que clasifique y extraiga parámetros
+        # Si es consulta o texto libre, pedir a Gemini que clasifique y extraiga parámetros usando historial
         try:
             instructions = self._load_prompt("query_prompt.txt")
             instructions = self._inject_date(instructions)
-            prompt = f"{instructions}\n\n--- MENSAJE DEL USUARIO ---\n{user_message}"
+            hist_str = f"--- HISTORIAL DE CONVERSACIÓN RECIENTE ---\n{history}\n\n" if history else ""
+            prompt = f"{instructions}\n\n{hist_str}--- MENSAJE DEL USUARIO ---\n{user_message}"
             response = self._call_api(prompt)
             data = json.loads(response.text)
 
@@ -136,12 +137,15 @@ class SentinelBrain:
         except Exception as e:
             print(f"❌ Error clasificando intención con Gemini: {e}")
             if fast_intent == "query":
-                # Heurística de fallback según palabras clave
                 msg_lower = user_message.lower()
                 if "patrimonio" in msg_lower or "net worth" in msg_lower:
                     return {"intent": "query", "query_type": "patrimony"}
+                if "desglos" in msg_lower and "ingres" in msg_lower:
+                    return {"intent": "query", "query_type": "income_breakdown"}
                 if "ahorro" in msg_lower:
                     return {"intent": "query", "query_type": "monthly_savings"}
+                if "nomina" in msg_lower or "nómina" in msg_lower:
+                    return {"intent": "query", "query_type": "category_total", "category": "Nómina"}
                 if "top" in msg_lower or "mas" in msg_lower or "más" in msg_lower:
                     return {"intent": "query", "query_type": "top_categories"}
                 return {"intent": "query", "query_type": "monthly_summary"}
@@ -242,20 +246,42 @@ class SentinelBrain:
                 f"• 💳 <b>Cuenta Unicaja (operativa):</b> {self._format_euro(unicaja)}"
             )
 
-        # ── 2. Consulta de Gasto en Categoría ─────────────────────────────
+        # ── 2. Consulta de Desglose de Ingresos ────────────────────────────
+        elif query_type == "income_breakdown":
+            m_name = data.get("month_name", "Mes actual")
+            nomina = data.get("nomina", 0.0)
+            otros = data.get("otros", 0.0)
+            regalos = data.get("regalos_extras", 0.0)
+            total = data.get("total_ingresos", 0.0)
+
+            lines = [f"💵 <b>Desglose de Ingresos — {m_name}</b>\n"]
+            lines.append(f"• 💼 <b>Nómina:</b> {self._format_euro(nomina)}")
+            if otros > 0:
+                lines.append(f"• 📦 <b>Otros ingresos:</b> {self._format_euro(otros)}")
+            if regalos > 0:
+                lines.append(f"• 🎁 <b>Regalos / Extras:</b> {self._format_euro(regalos)}")
+            lines.append(f"\n💰 <b>Total Ingresos:</b> <code>{self._format_euro(total)}</code>")
+            return "\n".join(lines)
+
+        # ── 3. Consulta de Categoría Concreta ──────────────────────────────
         elif query_type == "category_total":
             cat = data.get("category", "Categoría")
             spent = data.get("spent", 0.0)
             m_name = data.get("month_name", "Mes actual")
             budget = data.get("budget")
 
-            resp = f"📊 <b>Gasto en {cat} ({m_name}):</b> <code>{self._format_euro(spent)}</code>"
+            cat_lower = cat.lower()
+            if any(inc in cat_lower for inc in ("nómina", "nomina", "otros", "regalos", "ingreso")):
+                resp = f"💵 <b>Ingreso por {cat} ({m_name}):</b> <code>{self._format_euro(spent)}</code>"
+            else:
+                resp = f"📊 <b>Gasto en {cat} ({m_name}):</b> <code>{self._format_euro(spent)}</code>"
 
             if budget and budget > 0:
                 pct = (spent / budget) * 100
                 icon = "⚠️" if spent > budget else "🎯"
                 resp += f"\n{icon} <i>Presupuesto asignado: {self._format_euro(budget)} ({pct:.0f}% consumido)</i>"
             return resp
+
 
         # ── 3. Balance mensual, ahorro o ingresos ─────────────────────────
         elif query_type in ("monthly_summary", "monthly_savings", "monthly_income"):
