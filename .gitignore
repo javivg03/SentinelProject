@@ -26,3 +26,7 @@ docs/gem_prompt.md
 docs/*.xlsx
 docs/*.xls
 docs/*.csv
+docs/dump*.json
+scratch_*.py
+.pytest_cache/
+scratch/

@@ -3,23 +3,40 @@ import os
 import json
 import datetime
 import traceback
+import unicodedata
+import re
 from google.oauth2.service_account import Credentials
 from dotenv import load_dotenv
 
 load_dotenv()
 
 
+def _normalize_text(text: str) -> str:
+    """Normaliza texto eliminando acentos, caracteres especiales y convirtiendo a minúsculas."""
+    if not text:
+        return ""
+    text = str(text).strip().lower()
+    # Eliminar diacríticos (tildes)
+    nfkd_form = unicodedata.normalize('NFKD', text)
+    cleaned = "".join([c for c in nfkd_form if not unicodedata.combining(c)])
+    # Limpiar espacios múltiples
+    return re.sub(r'\s+', ' ', cleaned).strip()
+
+
 class SheetsConnector:
     """
-    Conector con Google Sheets para el proyecto Sentinel.
-
-    Gestiona autenticación dual (local / nube), mapeo de categorías y meses,
-    y ofrece operaciones tanto de escritura (log de gastos) como de lectura
-    (consultas financieras del usuario).
+    Conector con Google Sheets para Sentinel adaptado a 'Finanzas_JVG_2026'.
 
     Pestañas gestionadas:
-    - "Presupuesto"    → Totales mensuales por categoría (escritura acumulativa)
-    - "Transacciones"  → Log individual de cada movimiento (append-only)
+    1. '📊 Registro Mensual' (Matriz principal):
+       - Columnas: Categoría (A), Concepto (B), Enero (C) ... Diciembre (N), Total Anual (O), Media/Mes (P).
+       - Filas: Ingresos, Gastos Vitales, Ocio y Extras, Inversión y Ahorro, Resumen y Patrimonio.
+    2. '🏦 Patrimonio y Objetivos':
+       - Contiene el desglose de cubos y metas a largo plazo, enlazadas por fórmulas nativas a la Pestaña 1.
+    3. 'Transacciones' (Log de auditoría - Opción B):
+       - Histórico append-only con [Fecha, Concepto, Categoría, Importe, Tipo].
+    4. Pestaña de Presupuesto ('🎯 Presupuesto Septiembre' o similar):
+       - Objetivos de gasto mensual para alertas automáticas.
     """
 
     SCOPES = [
@@ -27,9 +44,29 @@ class SheetsConnector:
         "https://www.googleapis.com/auth/drive",
     ]
 
+    MONTH_NAMES = [
+        "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+        "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+    ]
+
+    # Filas fijas del resumen en '📊 Registro Mensual' (1-indexed)
+    ROW_TOTAL_INGRESOS = 8
+    ROW_TOTAL_VITALES = 20
+    ROW_TOTAL_OCIO = 38
+    ROW_TOTAL_INVERSION = 43
+    ROW_AHORRO_NETO = 50
+    ROW_TASA_AHORRO = 51
+
+    # Filas de Patrimonio en '📊 Registro Mensual' (1-indexed)
+    ROW_PATRIMONIO_TR = 54
+    ROW_PATRIMONIO_MSCI = 55
+    ROW_PATRIMONIO_BTC = 56
+    ROW_PATRIMONIO_UNICAJA = 57
+    ROW_PATRIMONIO_TOTAL = 58
+
     def __init__(self):
         try:
-            # ── Autenticación dual: local vs. producción (Render) ──────────
+            # ── 1. Autenticación dual (local vs nube) ──────────────────────
             if os.path.exists("service_account.json"):
                 self.creds = Credentials.from_service_account_file(
                     "service_account.json", scopes=self.SCOPES
@@ -50,41 +87,79 @@ class SheetsConnector:
 
             self.client = gspread.authorize(self.creds)
 
-            # ── Libro de cálculo ───────────────────────────────────────────
+            # ── 2. Apertura del libro ─────────────────────────────────────
             spreadsheet_id = os.getenv("SPREADSHEET_ID")
             if not spreadsheet_id:
                 raise ValueError("❌ La variable 'SPREADSHEET_ID' no está definida.")
 
+            # Limpiar posibles caracteres extraños o sufijos
+            spreadsheet_id = spreadsheet_id.strip()
             self.spreadsheet = self.client.open_by_key(spreadsheet_id)
-            self.sheet = self.spreadsheet.worksheet("Presupuesto")
 
-            # ── Pestaña de Transacciones (log individual, append-only) ─────
-            try:
-                self.transactions_sheet = self.spreadsheet.worksheet("Transacciones")
-            except gspread.exceptions.WorksheetNotFound:
-                self.transactions_sheet = self.spreadsheet.add_worksheet(
-                    title="Transacciones", rows="5000", cols="5"
-                )
-                self.transactions_sheet.append_row(
-                    ["Fecha", "Concepto", "Categoría", "Importe", "Tipo"]
-                )
-                print("✨ Pestaña 'Transacciones' creada automáticamente.")
+            # ── 3. Localizar pestañas con búsqueda flexible ───────────────
+            worksheets = self.spreadsheet.worksheets()
+            ws_map = {ws.title: ws for ws in worksheets}
 
-            # ── Índices en caché para evitar lecturas repetitivas ──────────
-            # Mes -> columna: Enero=col 2 (B), Febrero=col 3 (C), ...
-            self.month_columns = {m: m + 1 for m in range(1, 13)}
+            # Pestaña 1: Matriz principal (busca 'Registro' o primer worksheet)
+            self.matrix_sheet = None
+            for title, ws in ws_map.items():
+                if "registro" in title.lower():
+                    self.matrix_sheet = ws
+                    break
+            if not self.matrix_sheet:
+                # Fallback al primer worksheet
+                self.matrix_sheet = worksheets[0]
 
-            # Categoría (lowercase) -> número de fila (1-indexed)
-            categories = self.sheet.col_values(1)
-            self.category_map = {
-                val.strip().lower(): i + 1
-                for i, val in enumerate(categories)
-                if val.strip()
-            }
+            # Alias para compatibilidad con código antiguo
+            self.sheet = self.matrix_sheet
+
+            # Pestaña 2: Patrimonio
+            self.patrimony_sheet = None
+            for title, ws in ws_map.items():
+                if "patrimonio" in title.lower():
+                    self.patrimony_sheet = ws
+                    break
+
+            # Pestaña 3: Presupuesto (para alertas)
+            self.budget_sheet = None
+            for title, ws in ws_map.items():
+                if "presupuesto" in title.lower():
+                    self.budget_sheet = ws
+                    break
+
+            # Pestaña Auxiliar: Log de auditoría ('Transacciones')
+            self.transactions_sheet = None
+            for title, ws in ws_map.items():
+                if "transacciones" in title.lower() or "movimientos" in title.lower():
+                    self.transactions_sheet = ws
+                    break
+
+            if not self.transactions_sheet:
+                try:
+                    self.transactions_sheet = self.spreadsheet.add_worksheet(
+                        title="Transacciones", rows="5000", cols="5"
+                    )
+                    self.transactions_sheet.append_row(
+                        ["Fecha", "Concepto", "Categoría", "Importe", "Tipo"]
+                    )
+                    print("✨ Pestaña 'Transacciones' creada automáticamente.")
+                except Exception as e:
+                    print(f"⚠️ No se pudo crear pestaña 'Transacciones': {e}")
+
+            # ── 4. Mapeo de Columnas de Mes ──────────────────────────────
+            # Enero=Col 3 (C), Febrero=Col 4 (D), ..., Diciembre=Col 14 (N)
+            self.month_columns = {m: m + 2 for m in range(1, 13)}
+
+            # ── 5. Mapeo de Categorías (Columna B de Registro Mensual) ────
+            self._load_category_mappings()
+
+            # ── 6. Cargar límites de presupuesto para alertas ────────────
+            self.budget_limits = self._load_budget_limits()
 
             print(
                 f"✅ Conexión establecida con '{self.spreadsheet.title}'. "
-                f"Categorías cacheadas: {len(self.category_map)}"
+                f"Pestaña matriz: '{self.matrix_sheet.title}'. "
+                f"Categorías indexadas: {len(self.category_map)}."
             )
 
         except Exception as e:
@@ -93,526 +168,484 @@ class SheetsConnector:
             raise
 
     # ─────────────────────────────────────────────────────────────────────────
+    # INICIALIZACIÓN Y CACHÉ
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _load_category_mappings(self):
+        """
+        Escanea la columna B ('Concepto') de '📊 Registro Mensual' y crea
+        un diccionario de mapeo a fila (1-indexed), incluyendo sinónimos comunes.
+        """
+        self.category_map = {}
+        self.category_display_names = {}
+
+        try:
+            # Leemos las primeras 50 filas de la columna B (Concepto)
+            col_b = self.matrix_sheet.col_values(2)
+            col_a = self.matrix_sheet.col_values(1)
+
+            for i, val in enumerate(col_b):
+                row_idx = i + 1
+                concept = str(val).strip()
+                if not concept or concept.lower() == "concepto":
+                    continue
+
+                clean_key = _normalize_text(concept)
+                self.category_map[clean_key] = row_idx
+                self.category_display_names[clean_key] = concept
+
+            # Mapear sinónimos / alias habituales para mayor tolerancia
+            synonyms = {
+                "super": "supermercado",
+                "mercadona": "supermercado",
+                "carrefour": "supermercado",
+                "lidl": "supermercado",
+                "alcampo": "supermercado",
+                "compra": "supermercado",
+                "gasoil": "gasolina",
+                "combustible": "gasolina",
+                "repostaje": "gasolina",
+                "farmacia": "farmacia / salud",
+                "salud": "farmacia / salud",
+                "medicamentos": "farmacia / salud",
+                "disney": "suscripciones",
+                "suscripcion disney": "suscripciones",
+                "netflix": "suscripciones",
+                "spotify": "suscripciones",
+                "suscripcion": "suscripciones",
+                "suscripciones": "suscripciones",
+                "bar": "tomar algo",
+                "cerveza": "tomar algo",
+                "cervezas": "tomar algo",
+                "copas": "tomar algo",
+                "alcohol": "tomar algo",
+                "restaurante": "comer fuera",
+                "restaurantes": "comer fuera",
+                "cena": "comer fuera",
+                "cenar": "comer fuera",
+                "comida": "comer fuera",
+                "almuerzo": "comer fuera",
+                "clases": "clases particulares",
+                "msci world": "dca msci world (tr)",
+                "msci": "dca msci world (tr)",
+                "sp500": "dca msci world (tr)",
+                "s&p 500": "dca msci world (tr)",
+                "s&p500": "dca msci world (tr)",
+                "btc": "dca btc (tr)",
+                "bitcoin": "dca btc (tr)",
+                "nomina": "nomina",
+                "sueldo": "nomina",
+                "paga": "nomina",
+            }
+
+            for alias, target in synonyms.items():
+                norm_target = _normalize_text(target)
+                if norm_target in self.category_map:
+                    self.category_map[_normalize_text(alias)] = self.category_map[norm_target]
+
+        except Exception as e:
+            print(f"⚠️ Error cargando categorías de la matriz: {e}")
+
+    def _load_budget_limits(self) -> dict:
+        """
+        Lee los límites de gasto mensual fijados en la pestaña de Presupuesto.
+        Devuelve dict: {clean_category_name: limit_float}.
+        """
+        limits = {}
+        if not self.budget_sheet:
+            return limits
+
+        try:
+            all_vals = self.budget_sheet.get_all_values()
+            # La tabla tiene Columna B (Concepto) y Columna C (Presupuesto)
+            for row in all_vals[7:]:  # Empezar desde fila 8
+                if len(row) < 3:
+                    continue
+                concept = row[1].strip()
+                budget_val = row[2].strip()
+                if not concept or not budget_val:
+                    continue
+
+                clean_concept = _normalize_text(concept)
+                amt = self._clean_value(budget_val)
+                if amt > 0:
+                    limits[clean_concept] = amt
+
+        except Exception as e:
+            print(f"⚠️ Error cargando límites de presupuesto: {e}")
+
+        return limits
+
+    # ─────────────────────────────────────────────────────────────────────────
     # HELPERS PRIVADOS
     # ─────────────────────────────────────────────────────────────────────────
 
     def _clean_value(self, val) -> float:
-        """
-        Normaliza un valor de celda a float positivo operable.
-
-        Maneja todos los formatos que puede devolver gspread:
-        - Float/int nativo:    1226.52   → 1226.52
-        - Formato anglosajón: "1226.52"  → 1226.52
-        - Formato europeo:    "1.226,52" → 1226.52  ← era el bug
-        - Con símbolo euro:   "1.226,52 €" → 1226.52
-        - Celda vacía/None:   None, "", " " → 0.0
-
-        El bug anterior: "1.226,52".replace(',','.') → "1.226.52"
-        → float() lanza ValueError → devuelve 0.0 silenciosamente.
-        Esto hacía que TODOS los valores ≥ 1.000€ se perdieran.
-        """
+        """Normaliza cualquier celda a float positivo operable."""
         if val is None:
             return 0.0
-        # Si gspread devuelve un número nativo (int/float), usarlo directamente
         if isinstance(val, (int, float)):
-            return abs(float(val))
+            return float(val)
         try:
-            s = str(val).replace("€", "").replace(" ", "").strip()
-            if not s or s.lower() == "none":
+            s = str(val).replace("€", "").replace("%", "").replace(" ", "").strip()
+            if not s or s.lower() in ("none", "#error!", "#ref!", "#value!", "—", "-"):
                 return 0.0
-            # Formato europeo: tiene AMBOS separadores (. miles, , decimal)
-            # Ejemplo: "1.226,52" → eliminar punto, cambiar coma → "1226.52"
             if "," in s and "." in s:
                 s = s.replace(".", "").replace(",", ".")
             elif "," in s:
-                # Solo coma → separador decimal (ej: "755,68" → "755.68")
                 s = s.replace(",", ".")
-            # Solo punto → formato estándar, no tocar (ej: "1226.52")
-            return abs(float(s))
+            return float(s)
         except (ValueError, TypeError):
             return 0.0
 
     def _get_month_col(self, fecha_str: str = None) -> int:
-        """
-        Devuelve el número de columna del mes.
-        Acepta fecha en formato 'YYYY-MM-DD' o 'YYYY-MM'.
-        Si no se proporciona, usa el mes actual.
-        """
+        """Devuelve el número de columna (1-indexed) correspondiente al mes."""
         if fecha_str:
             try:
-                month = int(str(fecha_str).split("-")[1])
-                return self.month_columns.get(month)
+                # Extraer mes de formato YYYY-MM-DD o YYYY-MM
+                parts = str(fecha_str).split("-")
+                if len(parts) >= 2:
+                    month = int(parts[1])
+                    return self.month_columns.get(month, 11)
             except (IndexError, ValueError):
                 pass
-        return self.month_columns.get(datetime.datetime.now().month)
+        now_month = datetime.datetime.now().month
+        return self.month_columns.get(now_month, now_month + 2)
+
+    def _get_month_idx(self, fecha_str: str = None) -> int:
+        """Devuelve el número del mes (1 a 12)."""
+        if fecha_str:
+            try:
+                parts = str(fecha_str).split("-")
+                if len(parts) >= 2:
+                    return int(parts[1])
+            except (IndexError, ValueError):
+                pass
+        return datetime.datetime.now().month
 
     def _today(self) -> str:
         """Devuelve la fecha actual en formato YYYY-MM-DD."""
         return datetime.datetime.now().strftime("%Y-%m-%d")
 
+    def _find_row_for_category(self, category: str) -> int:
+        """Busca el número de fila para una categoría con búsqueda difusa."""
+        clean = _normalize_text(category)
+        if clean in self.category_map:
+            return self.category_map[clean]
+
+        # Búsqueda por contención
+        for key, row in self.category_map.items():
+            if key in clean or clean in key:
+                return row
+
+        # Si no se encuentra, buscar fila 'Otros'
+        return self.category_map.get("otros", 32)
+
     # ─────────────────────────────────────────────────────────────────────────
-    # ESCRITURA — log_expense y batch_log_expenses
+    # ESCRITURA — log_expense y batch_log_expenses (OPCIÓN B)
     # ─────────────────────────────────────────────────────────────────────────
 
     def log_expense(
-        self, concept: str, category: str, amount, fecha: str = None
-    ) -> bool:
+        self, concept: str, category: str, amount, fecha: str = None, tipo: str = None
+    ) -> dict:
         """
-        Registra una única transacción:
-        1. Añade fila en la pestaña 'Transacciones' (log individual)
-        2. Acumula el importe en la celda correspondiente de 'Presupuesto'
-
-        Args:
-            concept:  Nombre del gasto (ej: "Mercadona")
-            category: Categoría exacta del Sheet (ej: "Supermercado")
-            amount:   Importe (string o float, siempre se toma absoluto)
-            fecha:    Fecha en formato YYYY-MM-DD o YYYY-MM (opcional)
+        Registra una transacción siguiendo la Arquitectura Opción B:
+        1. Acumula el importe en la matriz '📊 Registro Mensual' en la celda (categoría, mes).
+        2. Añade fila en la pestaña auxiliar 'Transacciones' (log de auditoría).
+        3. Evalúa si se supera el presupuesto asignado para alertar al usuario.
 
         Returns:
-            True si el registro fue exitoso, False en caso de error.
+            dict con {
+                "success": bool,
+                "category": str,
+                "amount": float,
+                "new_total": float,
+                "month_name": str,
+                "budget_alert": str | None
+            }
         """
         try:
-            col = self._get_month_col(fecha)
-            clean_category = category.strip().lower()
-            target_row = self.category_map.get(clean_category, -1)
-
-            if target_row == -1:
-                print(f"⚠️ Categoría '{category}' no encontrada. Abortando registro.")
-                return False
-
-            amount_to_add = self._clean_value(amount)
+            amount_to_add = abs(self._clean_value(amount))
+            month_idx = self._get_month_idx(fecha)
+            month_col = self._get_month_col(fecha)
+            month_name = self.MONTH_NAMES[month_idx - 1]
             timestamp = fecha if fecha else self._today()
 
-            # 1. Log individual en Transacciones
-            tipo = "INGRESO" if clean_category == "nómina" else "GASTO"
-            self.transactions_sheet.append_row(
-                [timestamp, concept, category, amount_to_add, tipo]
-            )
+            target_row = self._find_row_for_category(category)
+            clean_cat = _normalize_text(category)
 
-            # 2. Acumular en Presupuesto
-            current_val = self._clean_value(self.sheet.cell(target_row, col).value)
-            new_total = round(current_val + amount_to_add, 2)
-            self.sheet.update_cell(target_row, col, new_total)
+            # Determinar tipo
+            if not tipo:
+                tipo = "INGRESO" if clean_cat in ("nomina", "regalos/extras", "otros ingresos") else "GASTO"
+                if "dca" in clean_cat or "inversion" in clean_cat:
+                    tipo = "AHORRO"
 
-            print(f"💰 Registro exitoso: {category} | {current_val}€ → {new_total}€")
-            return True
+            # 1. Leer valor actual de la celda de la matriz y acumular
+            current_cell_val = self._clean_value(self.matrix_sheet.cell(target_row, month_col).value)
+            new_total = round(current_cell_val + amount_to_add, 2)
+            self.matrix_sheet.update_cell(target_row, month_col, new_total)
+
+            # 2. Append en pestaña 'Transacciones' (Auditoría)
+            if self.transactions_sheet:
+                try:
+                    self.transactions_sheet.append_row(
+                        [timestamp, concept, category, amount_to_add, tipo]
+                    )
+                except Exception as e_log:
+                    print(f"⚠️ Error añadiendo fila a Transacciones: {e_log}")
+
+            # 3. Comprobar alerta de presupuesto
+            budget_alert = None
+            budget_limit = self.budget_limits.get(clean_cat)
+            if budget_limit and new_total > budget_limit:
+                budget_alert = (
+                    f"⚠️ <b>Atención: Presupuesto excedido en {category}</b>\n"
+                    f"Llevas <b>{new_total:.2f}€</b> gastados de <b>{budget_limit:.2f}€</b> presupuestados "
+                    f"({(new_total / budget_limit) * 100:.0f}%)."
+                )
+
+            print(f"💰 Registro exitoso: {category} ({month_name}) | {current_cell_val}€ → {new_total}€")
+            return {
+                "success": True,
+                "category": category,
+                "amount": amount_to_add,
+                "new_total": new_total,
+                "month_name": month_name,
+                "budget_alert": budget_alert,
+            }
 
         except Exception as e:
             print(f"❌ Error al registrar gasto en Sheets: {e}")
-            return False
+            traceback.print_exc()
+            return {"success": False, "error": str(e)}
 
     def batch_log_expenses(self, parsed_items: list) -> int:
         """
-        Registra una lista de movimientos en bloque (extracción de documentos bancarios).
-
-        Estrategia de eficiencia (minimizar llamadas a la API de Google):
-        1. Vuelca TODAS las filas de una vez a 'Transacciones' con append_rows()
-        2. Agrupa los importes por (mes, categoría) y hace UNA sola escritura
-           masiva a 'Presupuesto' con update_cells()
-
-        Args:
-            parsed_items: Lista de dicts con claves: concepto, categoria, importe,
-                          fecha (opcional), tipo (opcional)
-
-        Returns:
-            Número de items procesados (o 0 si hubo error).
+        Registra un lote masivo de movimientos (extractos bancarios):
+        1. Vuelca todas las filas en 'Transacciones'.
+        2. Agrupa por (mes, categoría) y actualiza las celdas en la matriz.
         """
         if not parsed_items:
             return 0
 
         try:
-            # ── Paso 1: Volcar log individual a Transacciones ──────────────
             rows_to_append = []
+            aggregated = {}  # (target_row, month_col) -> float
+
             for item in parsed_items:
-                fecha_log = item.get("fecha") or self._today()
+                f = item.get("fecha") or self._today()
+                cat = item.get("categoria", "Otros")
+                c = item.get("concepto", "Sin concepto")
+                amt = abs(self._clean_value(item.get("importe", 0)))
                 tipo = item.get("tipo", "GASTO")
-                rows_to_append.append([
-                    fecha_log,
-                    item.get("concepto", "Sin concepto"),
-                    item.get("categoria", "Otros"),
-                    self._clean_value(item.get("importe", 0)),
-                    tipo,
-                ])
 
-            if rows_to_append:
+                rows_to_append.append([f, c, cat, amt, tipo])
+
+                target_row = self._find_row_for_category(cat)
+                month_col = self._get_month_col(f)
+                key = (target_row, month_col)
+                aggregated[key] = aggregated.get(key, 0.0) + amt
+
+            # Volcar a Transacciones
+            if self.transactions_sheet and rows_to_append:
                 self.transactions_sheet.append_rows(rows_to_append)
-                print(f"📝 {len(rows_to_append)} transacciones registradas en el Log.")
 
-            # ── Paso 2: Agregar importes por (mes, categoría) ──────────────
-            aggregated = {}  # clave: (col_mes, fila_cat) → importe acumulado
-            for item in parsed_items:
-                cat = str(item.get("categoria", "")).strip().lower()
-                amt = self._clean_value(item.get("importe", 0))
-                col = self._get_month_col(item.get("fecha"))
-                target_cat = cat if cat in self.category_map else "otros"
-                target_row = self.category_map.get(target_cat)
-                if target_row:
-                    key = (col, target_row)
-                    aggregated[key] = aggregated.get(key, 0.0) + amt
-
-            if not aggregated:
-                return 0
-
-            # ── Paso 3: Leer valores actuales (1 lectura por columna) ──────
-            cols_needed = {k[0] for k in aggregated}
-            col_caches = {col: self.sheet.col_values(col) for col in cols_needed}
-
-            # ── Paso 4: Preparar escritura masiva ─────────────────────────
+            # Actualizar celdas en la matriz
             cells_to_update = []
-            for (col, target_row), amount_to_add in aggregated.items():
-                col_data = col_caches[col]
-                current_val = (
-                    self._clean_value(col_data[target_row - 1])
-                    if target_row <= len(col_data)
-                    else 0.0
-                )
-                new_total = round(current_val + amount_to_add, 2)
+            for (target_row, month_col), amt_to_add in aggregated.items():
+                current_val = self._clean_value(self.matrix_sheet.cell(target_row, month_col).value)
+                new_total = round(current_val + amt_to_add, 2)
                 cells_to_update.append(
-                    gspread.Cell(row=target_row, col=col, value=new_total)
+                    gspread.Cell(row=target_row, col=month_col, value=new_total)
                 )
-                print(f"📦 Lote: fila {target_row} col {col} | {current_val}€ → {new_total}€")
 
-            # ── Paso 5: Una sola llamada API para toda la escritura ────────
-            self.sheet.update_cells(cells_to_update)
-            print(f"✅ Batch completado: {len(parsed_items)} movimientos en {len(cells_to_update)} celdas.")
+            if cells_to_update:
+                self.matrix_sheet.update_cells(cells_to_update)
 
             return len(parsed_items)
 
         except Exception as e:
-            print(f"❌ Error al insertar lote en Sheets: {e}")
+            print(f"❌ Error en batch_log_expenses: {e}")
             return 0
 
     # ─────────────────────────────────────────────────────────────────────────
-    # LECTURA — Consultas financieras del usuario
+    # LECTURA DETERMINISTA — Consultas Financieras sin Alucinaciones
     # ─────────────────────────────────────────────────────────────────────────
 
-    def get_full_budget_data(self) -> dict:
+    def get_category_spending(self, category: str, month: int = None) -> dict:
         """
-        Lee TODOS los datos del Sheet de Presupuesto y los devuelve
-        organizados por secciones, respetando la estructura real del Excel:
-
-        - ingresos        : Nómina, Otros (ingresos), Regalos (recibidos)
-        - gastos_vitales  : Alquiler, Gasolina, Supermercado, etc.
-        - gastos_ocio     : Ropa, Comer fuera, Tabaco, etc.
-        - resumen         : Totales y Ahorro ya calculados por el propio Excel
-
-        La clave del diseño es que el Sheet YA tiene calculado el Ahorro
-        mediante fórmulas propias. Este método lo lee directamente en lugar
-        de intentar recalcularlo, evitando errores de lógica.
-
-        Detecta las secciones dinámicamente buscando las filas marcadoras:
-        "Total Ingresos", "Total gastos vitales", "Total gastos extraordinarios".
-        Esto hace el método robusto frente a cambios de orden en el Sheet.
-
-        Returns:
-            {
-                "ingresos": {"Nómina": {"Enero": 1959.77, ...}, ...},
-                "gastos_vitales": {"Alquiler": {"Enero": 325.0, ...}, ...},
-                "gastos_ocio": {"Comer fuera": {"Enero": 112.84, ...}, ...},
-                "resumen": {
-                    "Total Ingresos":  {"Enero": 2759.77, ...},
-                    "Total Gastos Vitales": {"Enero": 551.0, ...},
-                    "Total Gastos Ocio": {"Enero": 900.0, ...},
-                    "Ahorro": {"Enero": 755.68, ...},
-                    "Patrimonio": {"Enero": 3457.82, ...},
-                }
-            }
-        """
-        MONTH_NAMES = [
-            "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
-            "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
-        ]
-
-        # Marcadores de sección — detectamos dinámicamente
-        MARKER_INCOME_END    = "total ingresos"
-        MARKER_VITAL_END     = "total gastos vitales"
-        MARKER_OCIO_END      = "total gastos"   # cubre "total gastos extraordinarios..."
-        MARKER_SAVINGS       = "ahorro"
-        MARKER_PATRIMONY     = "patrimonio"
-        MARKER_NOTES         = "notas"
-
-        result = {
-            "ingresos": {},
-            "gastos_vitales": {},
-            "gastos_ocio": {},
-            "resumen": {},
-        }
-
-        try:
-            all_values = self.sheet.get_all_values()
-            section = "INCOME"  # Empezamos en la sección de ingresos
-
-            for row in all_values:
-                if not row or not row[0].strip():
-                    continue
-
-                label = row[0].strip()
-                label_lower = label.lower()
-
-                # Parar en las notas (fin de datos relevantes)
-                if label_lower.startswith(MARKER_NOTES):
-                    break
-
-                # Extraer valores mensuales de la fila (columnas B-M = índices 1-12)
-                monthly = {}
-                for i, month in enumerate(MONTH_NAMES):
-                    raw = row[i + 1] if (i + 1) < len(row) else ""
-                    val = self._clean_value(raw)
-                    if val > 0:
-                        monthly[month] = val
-
-                # ── Detectar filas de resumen / marcadores de sección ──────
-                if MARKER_INCOME_END in label_lower:
-                    if monthly:
-                        result["resumen"]["Total Ingresos"] = monthly
-                    section = "VITAL"
-                    continue
-
-                if MARKER_VITAL_END in label_lower:
-                    if monthly:
-                        result["resumen"]["Total Gastos Vitales"] = monthly
-                    section = "OCIO"
-                    continue
-
-                if MARKER_OCIO_END in label_lower and section == "OCIO":
-                    if monthly:
-                        result["resumen"]["Total Gastos Ocio"] = monthly
-                    section = "OTHER"
-                    continue
-
-                if label_lower == MARKER_SAVINGS:
-                    if monthly:
-                        result["resumen"]["Ahorro"] = monthly
-                    continue
-
-                if MARKER_PATRIMONY in label_lower:
-                    if monthly:
-                        result["resumen"]["Patrimonio"] = monthly
-                    continue
-
-                # ── Asignar la fila a su sección correspondiente ───────────
-                if not monthly:
-                    continue  # Fila sin datos, ignorar
-
-                if section == "INCOME":
-                    result["ingresos"][label] = monthly
-                elif section == "VITAL":
-                    result["gastos_vitales"][label] = monthly
-                elif section == "OCIO":
-                    result["gastos_ocio"][label] = monthly
-                # section == "OTHER" → ignorar (notas, patrimonio ya capturado)
-
-            return result
-
-        except Exception as e:
-            print(f"❌ Error en get_full_budget_data: {e}")
-            return {}
-
-
-    def query_category_total(self, category: str, month: int = None) -> float:
-        """
-        Devuelve el total gastado en una categoría durante el mes indicado
-        (por defecto el mes actual).
+        Consulta determinista: devuelve el total gastado en una categoría exacta
+        para el mes indicado (por defecto el mes actual) y su presupuesto si existe.
         """
         try:
             month = month or datetime.datetime.now().month
-            col = self.month_columns.get(month)
-            target_row = self.category_map.get(category.strip().lower(), -1)
-            if target_row == -1:
-                return -1.0  # Categoría no existe
-            return self._clean_value(self.sheet.cell(target_row, col).value)
-        except Exception as e:
-            print(f"❌ Error en query_category_total: {e}")
-            return 0.0
+            month_col = self.month_columns.get(month, month + 2)
+            month_name = self.MONTH_NAMES[month - 1]
 
-    def query_monthly_totals(self, month: int = None) -> dict:
-        """
-        Devuelve un resumen completo del mes: ingresos, gastos totales por
-        categoría y ahorro calculado.
+            target_row = self._find_row_for_category(category)
+            clean_cat = _normalize_text(category)
 
-        Returns:
-            {
-                "month": int,
-                "income": float,
-                "expenses": float,
-                "savings": float,
-                "by_category": {"Supermercado": 150.0, ...}
+            val_raw = self.matrix_sheet.cell(target_row, month_col).value
+            spent = self._clean_value(val_raw)
+            budget = self.budget_limits.get(clean_cat)
+
+            display_name = self.category_display_names.get(clean_cat, category)
+
+            return {
+                "category": display_name,
+                "month": month,
+                "month_name": month_name,
+                "spent": spent,
+                "budget": budget,
             }
+        except Exception as e:
+            print(f"❌ Error en get_category_spending: {e}")
+            return {"category": category, "spent": 0.0, "month_name": "Mes actual", "budget": None}
+
+    def get_monthly_summary(self, month: int = None) -> dict:
+        """
+        Consulta determinista: lee las filas de resumen calculadas por fórmulas
+        en '📊 Registro Mensual' para el mes solicitado.
         """
         try:
             month = month or datetime.datetime.now().month
-            col = self.month_columns.get(month)
-            col_data = self.sheet.col_values(col)
-            categories = self.sheet.col_values(1)
+            month_col = self.month_columns.get(month, month + 2)
+            month_name = self.MONTH_NAMES[month - 1]
 
-            income = 0.0
-            expenses = 0.0
-            by_category = {}
+            # Leer celdas calculadas por fórmulas nativas
+            col_data = self.matrix_sheet.col_values(month_col)
 
-            for i, cat_name in enumerate(categories):
-                if not cat_name.strip():
-                    continue
-                val = self._clean_value(col_data[i]) if i < len(col_data) else 0.0
-                if val == 0.0:
-                    continue
-                cat_lower = cat_name.strip().lower()
-                by_category[cat_name.strip()] = val
-                if cat_lower == "nómina":
-                    income += val
-                else:
-                    expenses += val
+            def safe_get(row_idx):
+                idx = row_idx - 1
+                return self._clean_value(col_data[idx]) if idx < len(col_data) else 0.0
+
+            total_ingresos = safe_get(self.ROW_TOTAL_INGRESOS)
+            total_vitales = safe_get(self.ROW_TOTAL_VITALES)
+            total_ocio = safe_get(self.ROW_TOTAL_OCIO)
+            total_inversion = safe_get(self.ROW_TOTAL_INVERSION)
+            ahorro_neto = safe_get(self.ROW_AHORRO_NETO)
+            tasa_ahorro = safe_get(self.ROW_TASA_AHORRO) * 100
+
+            # Si tasa de ahorro es 0 y hay ingresos, calcularla directamente
+            if tasa_ahorro == 0.0 and total_ingresos > 0:
+                tasa_ahorro = round((ahorro_neto / total_ingresos) * 100, 1)
 
             return {
                 "month": month,
-                "income": round(income, 2),
-                "expenses": round(expenses, 2),
-                "savings": round(income - expenses, 2),
-                "by_category": by_category,
+                "month_name": month_name,
+                "total_ingresos": total_ingresos,
+                "total_gastos_vitales": total_vitales,
+                "total_gastos_ocio": total_ocio,
+                "total_gastos": round(total_vitales + total_ocio, 2),
+                "total_inversion": total_inversion,
+                "ahorro_neto": ahorro_neto,
+                "tasa_ahorro": round(tasa_ahorro, 1),
             }
         except Exception as e:
-            print(f"❌ Error en query_monthly_totals: {e}")
+            print(f"❌ Error en get_monthly_summary: {e}")
             return {}
 
-    def query_last_transactions(self, limit: int = 5) -> list:
+    def get_patrimony(self) -> dict:
         """
-        Devuelve las últimas N transacciones del log individual ('Transacciones').
-
-        Returns:
-            Lista de dicts: [{"fecha": ..., "concepto": ..., "categoria": ...,
-                               "importe": ..., "tipo": ...}]
+        Consulta determinista: lee las filas 54-58 de '📊 Registro Mensual'
+        buscando el mes más reciente con datos reales de patrimonio.
+        Optimizado: lee la fila 58 de totales en 1 sola llamada para identificar el mes.
         """
         try:
-            all_rows = self.transactions_sheet.get_all_values()
-            # La primera fila son cabeceras, ignorarla
-            data_rows = all_rows[1:] if len(all_rows) > 1 else []
-            last_n = data_rows[-limit:] if len(data_rows) >= limit else data_rows
-            # Invertimos para mostrar las más recientes primero
-            last_n = list(reversed(last_n))
-            return [
-                {
-                    "fecha": row[0] if len(row) > 0 else "",
-                    "concepto": row[1] if len(row) > 1 else "",
-                    "categoria": row[2] if len(row) > 2 else "",
-                    "importe": self._clean_value(row[3]) if len(row) > 3 else 0.0,
-                    "tipo": row[4] if len(row) > 4 else "GASTO",
-                }
-                for row in last_n
-            ]
-        except Exception as e:
-            print(f"❌ Error en query_last_transactions: {e}")
-            return []
+            row_total = self.matrix_sheet.row_values(self.ROW_PATRIMONIO_TOTAL)
 
-    def query_period_total(self, start_date: str, end_date: str) -> dict:
-        """
-        Devuelve el total de gastos e ingresos entre dos fechas (inclusive)
-        consultando directamente la pestaña 'Transacciones'.
+            # Buscar desde diciembre hacia enero el mes con patrimonio > 0
+            for m in range(12, 0, -1):
+                col_idx = self.month_columns.get(m)  # m + 2
+                val_total = (
+                    self._clean_value(row_total[col_idx - 1])
+                    if col_idx - 1 < len(row_total)
+                    else 0.0
+                )
+                if val_total > 0:
+                    col_data = self.matrix_sheet.col_values(col_idx)
 
-        Args:
-            start_date: Fecha inicio en formato YYYY-MM-DD
-            end_date:   Fecha fin en formato YYYY-MM-DD
+                    def val_at(r):
+                        idx = r - 1
+                        return self._clean_value(col_data[idx]) if idx < len(col_data) else 0.0
 
-        Returns:
-            {"expenses": float, "income": float, "count": int}
-        """
-        try:
-            all_rows = self.transactions_sheet.get_all_values()
-            data_rows = all_rows[1:]  # Saltar cabecera
-
-            start = datetime.datetime.strptime(start_date, "%Y-%m-%d").date()
-            end = datetime.datetime.strptime(end_date, "%Y-%m-%d").date()
-
-            expenses = 0.0
-            income = 0.0
-            count = 0
-
-            for row in data_rows:
-                if not row or not row[0]:
-                    continue
-                try:
-                    # Intentamos parsear solo la parte de fecha (ignora hora si la hay)
-                    row_date = datetime.datetime.strptime(
-                        row[0][:10], "%Y-%m-%d"
-                    ).date()
-                except ValueError:
-                    continue
-
-                if start <= row_date <= end:
-                    amount = self._clean_value(row[3]) if len(row) > 3 else 0.0
-                    tipo = row[4].upper() if len(row) > 4 else "GASTO"
-                    if tipo == "INGRESO":
-                        income += amount
-                    else:
-                        expenses += amount
-                    count += 1
+                    return {
+                        "month_name": self.MONTH_NAMES[m - 1],
+                        "cuenta_tr_remunerada": val_at(self.ROW_PATRIMONIO_TR),
+                        "fondo_msci_world": val_at(self.ROW_PATRIMONIO_MSCI),
+                        "bitcoin": val_at(self.ROW_PATRIMONIO_BTC),
+                        "cuenta_unicaja": val_at(self.ROW_PATRIMONIO_UNICAJA),
+                        "patrimonio_total": val_total,
+                    }
 
             return {
-                "expenses": round(expenses, 2),
-                "income": round(income, 2),
-                "count": count,
+                "month_name": "Actual",
+                "cuenta_tr_remunerada": 0.0,
+                "fondo_msci_world": 0.0,
+                "bitcoin": 0.0,
+                "cuenta_unicaja": 0.0,
+                "patrimonio_total": 0.0,
             }
         except Exception as e:
-            print(f"❌ Error en query_period_total: {e}")
-            return {"expenses": 0.0, "income": 0.0, "count": 0}
+            print(f"❌ Error en get_patrimony: {e}")
+            return {}
 
-    def query_top_categories(self, month: int = None, top_n: int = 5) -> list:
-        """
-        Devuelve las N categorías con mayor gasto en el mes indicado,
-        ordenadas de mayor a menor.
-
-        Returns:
-            [{"categoria": str, "total": float}, ...]
-        """
+    def get_recent_transactions(self, limit: int = 5) -> list:
+        """Devuelve las últimas N transacciones del log de auditoría."""
+        if not self.transactions_sheet:
+            return []
         try:
-            totals = self.query_monthly_totals(month)
-            by_cat = totals.get("by_category", {})
-            # Excluir Nómina del ranking de "más gastado"
-            sorted_cats = sorted(
-                [(k, v) for k, v in by_cat.items() if k.lower() != "nómina"],
-                key=lambda x: x[1],
-                reverse=True,
-            )
+            all_rows = self.transactions_sheet.get_all_values()
+            data_rows = all_rows[1:] if len(all_rows) > 1 else []
+            last_n = data_rows[-limit:] if len(data_rows) >= limit else data_rows
+            last_n.reverse()
             return [
-                {"categoria": cat, "total": total}
-                for cat, total in sorted_cats[:top_n]
+                {
+                    "fecha": r[0] if len(r) > 0 else "",
+                    "concepto": r[1] if len(r) > 1 else "",
+                    "categoria": r[2] if len(r) > 2 else "",
+                    "importe": self._clean_value(r[3]) if len(r) > 3 else 0.0,
+                    "tipo": r[4] if len(r) > 4 else "GASTO",
+                }
+                for r in last_n
             ]
         except Exception as e:
-            print(f"❌ Error en query_top_categories: {e}")
+            print(f"❌ Error en get_recent_transactions: {e}")
+            return []
+
+    def get_top_categories(self, month: int = None, limit: int = 5) -> list:
+        """Devuelve las categorías con mayor gasto en el mes indicado."""
+        try:
+            month = month or datetime.datetime.now().month
+            month_col = self.month_columns.get(month, month + 2)
+            col_b = self.matrix_sheet.col_values(2)
+            col_data = self.matrix_sheet.col_values(month_col)
+
+            gastos = []
+            # Categorías de gasto: filas 11 a 19 (Vitales) y 23 a 37 (Ocio)
+            expense_rows = list(range(11, 20)) + list(range(23, 38))
+            for r in expense_rows:
+                idx = r - 1
+                cat = col_b[idx] if idx < len(col_b) else ""
+                val = self._clean_value(col_data[idx]) if idx < len(col_data) else 0.0
+                if cat and val > 0:
+                    gastos.append({"categoria": cat, "total": val})
+
+            gastos.sort(key=lambda x: x["total"], reverse=True)
+            return gastos[:limit]
+        except Exception as e:
+            print(f"❌ Error en get_top_categories: {e}")
             return []
 
     # ─────────────────────────────────────────────────────────────────────────
-    # APRENDIZAJE CONTINUO — Para uso futuro (Fase 3)
+    # COMPATIBILIDAD CON CÓDIGO ANTERIOR
     # ─────────────────────────────────────────────────────────────────────────
 
-    def calculate_dynamic_thresholds(self) -> dict:
-        """
-        Calcula la media aritmética de gasto mensual en categorías críticas
-        (ocio, alcohol, tabaco, fiesta, restaurantes) para detectar desviaciones.
-
-        Preparado para la Fase 3 del roadmap (Umbrales Dinámicos).
-        """
-        try:
-            print("📊 Calculando umbrales dinámicos...")
-            all_values = self.sheet.get_all_values()
-            keywords = ["ocio", "alcohol", "tabaco", "fiesta", "restaurante"]
-            results = {}
-
-            for row in all_values:
-                if not row:
-                    continue
-                cat = str(row[0]).lower().strip()
-                if any(k in cat for k in keywords):
-                    numeric_vals = [
-                        self._clean_value(val)
-                        for val in row[1:]
-                        if self._clean_value(val) > 0
-                    ]
-                    if numeric_vals:
-                        media = sum(numeric_vals) / len(numeric_vals)
-                        results[str(row[0])] = round(media, 2)
-
-            print(f"🧠 Perfiles aprendidos: {results}")
-            return results
-
-        except Exception as e:
-            print(f"❌ Error al calcular umbrales: {e}")
-            return {}
+    def get_full_budget_data(self) -> dict:
+        """Devuelve un dict simplificado para debug o compatibilidad previa."""
+        m = datetime.datetime.now().month
+        return {
+            "resumen_mes_actual": self.get_monthly_summary(m),
+            "patrimonio": self.get_patrimony(),
+            "top_gastos": self.get_top_categories(m),
+        }

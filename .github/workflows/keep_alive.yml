@@ -1,0 +1,22 @@
+name: Sentinel Keep Alive
+
+on:
+  schedule:
+    # Ejecuta cada 10 minutos para evitar la suspensión por inactividad en Render Free Tier
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Sentinel Health Check
+        run: |
+          echo "Pinging Sentinel at https://sentinelproject.onrender.com/ ..."
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://sentinelproject.onrender.com/ || true)
+          echo "HTTP Status: $STATUS"
+          if [ "$STATUS" = "200" ]; then
+            echo "✅ Sentinel está activo y despierto."
+          else
+            echo "⚠️ Sentinel respondió con status $STATUS (o en proceso de arranque)."
+          fi

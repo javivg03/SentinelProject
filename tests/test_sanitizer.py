@@ -1,5 +1,11 @@
 import pytest
+import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from sanitizer import DataSanitizer
+
 
 def test_sanitize_iban():
     sanitizer = DataSanitizer()
@@ -8,12 +14,14 @@ def test_sanitize_iban():
     assert "ES1234567890123456789012" not in result
     assert "[REDACTED:IBAN]" in result
 
+
 def test_sanitize_email():
     sanitizer = DataSanitizer()
     text = "hola@test.com gastó 20€"
     result = sanitizer.clean(text)
     assert "hola@test.com" not in result
     assert "[REDACTED:EMAIL]" in result
+
 
 def test_sanitize_credit_card():
     sanitizer = DataSanitizer()

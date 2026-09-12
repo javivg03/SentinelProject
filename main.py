@@ -128,32 +128,40 @@ MONTH_NAMES = {
 
 
 async def handle_financial_question(
-    update: Update, user_question: str
+    update: Update, user_question: str, intent_data: dict = None
 ) -> None:
     """
-    Responde CUALQUIER consulta o análisis financiero del usuario.
-
-    Reemplaza los dos handlers anteriores (handle_query_intent y
-    handle_analysis_intent) con un enfoque unificado:
-    1. Leer TODOS los datos del Sheet de una sola vez (todos los meses,
-       todas las categorías)
-    2. Pasar esos datos + la pregunta del usuario a Gemini
-    3. Dejar que Gemini responda libremente sin restricciones
-
-    Es equivalente a pegarle el Excel completo al usuario y que él mismo
-    responda cualquier duda. Sin limitaciones de mes ni de tipo de consulta.
+    Ejecuta la consulta determinista en Google Sheets y devuelve la respuesta
+    formateada con las cifras reales (sin alucinaciones numéricas).
     """
     msg = await update.message.reply_text("📊 Consultando tus datos financieros...")
 
-    budget_data = sheets.get_full_budget_data()
-    if not budget_data:
-        await msg.edit_text(
-            "⚠️ No pude leer datos de tu hoja de presupuesto. "
-            "Comprueba que el Sheet tiene datos y la conexión está activa."
-        )
-        return
+    intent_data = intent_data or {}
+    query_type = intent_data.get("query_type", "monthly_summary")
+    month = intent_data.get("month")
+    category = intent_data.get("category")
 
-    answer = brain.answer_financial_question(budget_data, user_question)
+    data = None
+    if query_type == "patrimony":
+        data = sheets.get_patrimony()
+    elif query_type == "category_total" and category:
+        data = sheets.get_category_spending(category, month)
+    elif query_type in ("monthly_summary", "monthly_savings", "monthly_income"):
+        data = sheets.get_monthly_summary(month)
+    elif query_type == "top_categories":
+        data = sheets.get_top_categories(month)
+    elif query_type == "last_transactions":
+        data = sheets.get_recent_transactions()
+    else:
+        # Heurística si query_type vino genérico
+        if category:
+            data = sheets.get_category_spending(category, month)
+            query_type = "category_total"
+        else:
+            data = sheets.get_monthly_summary(month)
+            query_type = "monthly_summary"
+
+    answer = brain.format_query_response(query_type, data, user_question)
     await msg.edit_text(answer, parse_mode=ParseMode.HTML)
 
 
@@ -234,17 +242,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     intent = intent_data.get("intent", "log")
 
     # ── Paso 2: Enrutar según intención ─────────────────────────────────────
-    # Tanto 'query' como 'analysis' van al mismo handler unificado.
-    # La diferencia entre "consulta" y "análisis" la gestiona Gemini internamente.
     if intent in ("query", "analysis"):
-        await handle_financial_question(update, clean_text)
+        await handle_financial_question(update, clean_text, intent_data)
         return
 
     if intent == "unknown":
         await update.message.reply_text(
             "🤔 No estoy seguro de lo que quieres hacer.\n"
             "Puedes registrar un gasto (<i>'25€ en Mercadona'</i>) "
-            "o consultarme algo (<i>'¿cuánto llevo este mes?'</i>).",
+            "o consultarme algo (<i>'¿cuánto llevo en gasolina?'</i> o <i>'¿cuál es mi patrimonio?'</i>).",
             parse_mode=ParseMode.HTML,
         )
         return
@@ -260,33 +266,47 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     if status == "SUCCESS":
-        final_response = "🛡️ <b>Análisis de Sentinel</b>\n\n"
+        final_response = "🛡️ <b>Registro de Sentinel</b>\n\n"
         registrados = 0
         fallidos = 0
+        budget_alerts = []
 
         for item in resultado:
-            if sheets.log_expense(
-                item["concepto"], item["categoria"], str(item["importe"])
-            ):
+            res = sheets.log_expense(
+                item["concepto"],
+                item["categoria"],
+                str(item["importe"]),
+                item.get("fecha"),
+                item.get("tipo"),
+            )
+            if isinstance(res, dict) and res.get("success"):
                 registrados += 1
+                new_tot = res.get("new_total", 0.0)
+                m_name = res.get("month_name", "")
                 final_response += (
                     f"💰 <b>{item['concepto']}</b>\n"
-                    f"🏷️ {item['categoria']}\n"
-                    f"📉 {item['importe']}€\n\n"
+                    f"🏷️ {item['categoria']} ({m_name})\n"
+                    f"📉 {item['importe']}€ (acumulado mes: {new_tot:.2f}€)\n\n"
                 )
+                if res.get("budget_alert"):
+                    budget_alerts.append(res["budget_alert"])
             else:
                 fallidos += 1
                 final_response += (
                     f"❌ <b>Fallo:</b> {item['concepto']}\n"
-                    f"🏷️ {item['categoria']} (categoría no encontrada o error de Sheets)\n"
+                    f"🏷️ {item['categoria']} (error al escribir en Sheets)\n"
                     f"📉 {item['importe']}€\n\n"
                 )
 
         context.user_data["history"] = []
 
+        # Si hay alertas de presupuesto, añadirlas
+        if budget_alerts:
+            final_response += "\n".join(budget_alerts) + "\n\n"
+
         if registrados > 0 and fallidos == 0:
             await update.message.reply_text(
-                final_response + "✅ Todo registrado correctamente.",
+                final_response + "✅ Movimiento registrado en matriz y log.",
                 parse_mode=ParseMode.HTML,
             )
         elif registrados > 0:
@@ -399,28 +419,22 @@ async def handle_document(
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def debug_sheet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Comando temporal /debug — muestra los datos RAW que gspread devuelve
-    del Sheet para poder diagnosticar qué ve el bot exactamente.
-    Eliminar una vez resueltos los problemas de lectura.
-    """
-    import json
-    data = sheets.get_full_budget_data()
-    resumen = data.get("resumen", {})
-    ahorro = resumen.get("Ahorro", {})
-    ingresos_totales = resumen.get("Total Ingresos", {})
+    """Comando /debug — muestra estado de conexión y datos clave en tiempo real."""
+    now_m = datetime.datetime.now().month
+    summary = sheets.get_monthly_summary(now_m)
+    patrimony = sheets.get_patrimony()
 
     text = (
-        f"<b>🔍 Debug — Datos del Sheet</b>\n\n"
-        f"<b>Ahorro por mes:</b>\n"
-        + "\n".join(f"  • {m}: {v}€" for m, v in ahorro.items())
-        + f"\n\n<b>Total Ingresos por mes:</b>\n"
-        + "\n".join(f"  • {m}: {v}€" for m, v in ingresos_totales.items())
-        + f"\n\n<b>Secciones detectadas:</b>\n"
-        f"  • ingresos: {list(data.get('ingresos', {}).keys())}\n"
-        f"  • gastos_vitales: {list(data.get('gastos_vitales', {}).keys())}\n"
-        f"  • gastos_ocio: {list(data.get('gastos_ocio', {}).keys())}\n"
-        f"  • resumen: {list(resumen.keys())}"
+        f"<b>🔍 Debug — Sentinel en vivo</b>\n\n"
+        f"<b>Libro:</b> {sheets.spreadsheet.title}\n"
+        f"<b>Pestaña activa:</b> {sheets.matrix_sheet.title}\n\n"
+        f"<b>Mes actual ({summary.get('month_name', 'N/A')}):</b>\n"
+        f"  • Ingresos: {summary.get('total_ingresos', 0):.2f}€\n"
+        f"  • Gastos vitales: {summary.get('total_gastos_vitales', 0):.2f}€\n"
+        f"  • Gastos ocio: {summary.get('total_gastos_ocio', 0):.2f}€\n"
+        f"  • Ahorro neto: {summary.get('ahorro_neto', 0):.2f}€\n\n"
+        f"<b>Patrimonio ({patrimony.get('month_name', 'N/A')}):</b>\n"
+        f"  • Total: {patrimony.get('patrimonio_total', 0):.2f}€"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 

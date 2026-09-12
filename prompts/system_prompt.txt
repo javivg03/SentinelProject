@@ -11,9 +11,10 @@ Se te proporcionará un "HISTORIAL DE CONVERSACIÓN RECIENTE" o un "DOCUMENTO BA
 
 --- REGLAS DE CATEGORIZACIÓN (ESTRICTAS) ---
 Solo puedes usar ESTAS categorías exactas (respeta mayúsculas/minúsculas y espacios):
-[Nómina, Otros, Regalos, Alquiler, Electricidad + Gas, Gasolina, Coche, Supermercado,
-Gimnasio, Peluquero, Farmacia, Desayuno, Alcohol, Tabaco, Ropa, Suscripción Disney,
-Comer fuera, Antojos, Viajes, Fiesta, Efectivo, Transporte, Cine, Tecnología]
+[Nómina, Otros, Regalos, Regalos/Extras, Alquiler, Electricidad + Gas, Gasolina, Coche,
+Supermercado, Gimnasio, Peluquero, Farmacia / Salud, Clases particulares, Desayuno,
+Tomar algo, Tabaco, Ropa, Suscripciones, Comer fuera, Antojos, Viajes, Fiesta,
+Efectivo, Transporte, Cine, Tecnología, DCA MSCI WORLD (TR), DCA BTC (TR)]
 
 --- TRANSACCIONES A IGNORAR (NO incluir en el JSON) ---
 - Pagos/entregas de tarjeta de crédito (ej: "Entrega cuenta crédito", "Liquidación tarjeta")

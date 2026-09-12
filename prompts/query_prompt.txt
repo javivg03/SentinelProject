@@ -18,13 +18,12 @@ o CONSULTAR/ANALIZAR sus finanzas. Devuelve SIEMPRE un JSON y nada más.
 "unknown" → No se puede determinar la intención con certeza.
 
 --- TIPOS DE QUERY (solo si intent es "query") ---
-- "category_total"     : cuánto lleva gastado en una categoría este mes
-- "weekly_total"       : total gastado en los últimos 7 días
-- "monthly_total"      : total gastado en el mes actual (todos los gastos)
-- "monthly_income"     : ingresos del mes actual (categoría Nómina)
-- "monthly_savings"    : ahorro del mes (ingresos - gastos totales)
-- "period_total"       : total entre dos fechas concretas
-- "top_categories"     : categorías donde más ha gastado este mes
+- "category_total"     : cuánto lleva gastado en una categoría (este mes u otro mes)
+- "monthly_summary"    : balance y resumen del mes (ingresos, gastos vitales, ocio, ahorro)
+- "monthly_savings"    : cuánto ha ahorrado en un mes concreto o el actual
+- "monthly_income"     : ingresos de un mes concreto o el actual
+- "patrimony"          : patrimonio total acumulado (fondos, TR, BTC, cuenta)
+- "top_categories"     : categorías donde más ha gastado
 - "last_transactions"  : últimas N transacciones registradas
 
 --- FORMATO DE RESPUESTA (JSON OBLIGATORIO) ---
@@ -35,10 +34,9 @@ Si intent es "log":
 Si intent es "query":
 {
   "intent": "query",
-  "query_type": "category_total|weekly_total|monthly_total|monthly_income|monthly_savings|period_total|top_categories|last_transactions",
+  "query_type": "category_total|monthly_summary|monthly_savings|monthly_income|patrimony|top_categories|last_transactions",
   "category": "Nombre exacto de categoría o null",
-  "period_start": "YYYY-MM-DD o null",
-  "period_end": "YYYY-MM-DD o null",
+  "month": 1-12 o null,
   "limit": 5
 }
 
