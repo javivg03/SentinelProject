@@ -32,6 +32,8 @@ Se te puede proporcionar un "HISTORIAL DE CONVERSACIÓN RECIENTE".
 - "patrimony"          : patrimonio total acumulado (fondos, TR, BTC, cuenta)
 - "top_categories"     : categorías donde más ha gastado
 - "last_transactions"  : últimas N transacciones registradas
+- "get_notes"          : consultar notas o comentarios mensuales (ej. "¿qué notas tengo en septiembre?", "notas de agosto", "ver notas")
+- "add_note"           : añadir un apunte o comentario a un mes (ej. "añade nota a septiembre: pendiente fianza", "guarda nota: devolver 30€ de cena")
 
 --- FORMATO DE RESPUESTA (JSON OBLIGATORIO) ---
 
@@ -41,9 +43,10 @@ Si intent es "log":
 Si intent es "query":
 {
   "intent": "query",
-  "query_type": "category_total|income_breakdown|monthly_summary|monthly_savings|monthly_income|patrimony|top_categories|last_transactions",
+  "query_type": "category_total|income_breakdown|monthly_summary|monthly_savings|monthly_income|patrimony|top_categories|last_transactions|get_notes|add_note",
   "category": "Nombre exacto de categoría o null",
   "month": 1-12 o null,
+  "note_text": "Texto exacto de la nota si es add_note o null",
   "limit": 5
 }
 

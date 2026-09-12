@@ -85,7 +85,7 @@ class SentinelBrain:
             "cuáles", "cuales", "cómo", "como", "dónde",
             "muestra", "dame", "dime", "enseñame", "lista",
             "resumen", "presupuesto", "balance", "informe",
-            "patrimonio", "ahorro",
+            "patrimonio", "ahorro", "nota", "notas", "apunta",
         )
         if any(t.startswith(w) for w in QUERY_STARTERS):
             return "query"
@@ -148,6 +148,13 @@ class SentinelBrain:
                     return {"intent": "query", "query_type": "category_total", "category": "Nómina"}
                 if "top" in msg_lower or "mas" in msg_lower or "más" in msg_lower:
                     return {"intent": "query", "query_type": "top_categories"}
+                if "nota" in msg_lower or "notas" in msg_lower or "comentario" in msg_lower:
+                    if any(w in msg_lower for w in ("añade", "agrega", "pon", "guarda", "apunta", "anota")):
+                        note_txt = user_message
+                        if ":" in user_message:
+                            note_txt = user_message.split(":", 1)[1].strip()
+                        return {"intent": "query", "query_type": "add_note", "note_text": note_txt}
+                    return {"intent": "query", "query_type": "get_notes"}
                 return {"intent": "query", "query_type": "monthly_summary"}
 
             return {"intent": "log"}
@@ -340,6 +347,33 @@ class SentinelBrain:
                     f"<code>{self._format_euro(it['importe'])}</code>"
                 )
             return "\n".join(lines)
+
+        # ── 6. Consulta de Notas Mensuales ────────────────────────────────
+        elif query_type == "get_notes":
+            m_name = data.get("month_name", "Mes actual")
+            notes = data.get("notes", "").strip()
+            if not notes:
+                return f"📝 <b>Notas de {m_name}:</b>\n<i>No tienes notas registradas para este mes en la hoja de cálculo.</i>"
+
+            bullets = [f"• {n.strip()}" for n in notes.split(" | ") if n.strip()]
+            formatted_notes = "\n".join(bullets)
+            return f"📝 <b>Notas de {m_name}:</b>\n\n{formatted_notes}"
+
+        # ── 7. Añadir Nota Mensual ────────────────────────────────────────
+        elif query_type == "add_note":
+            if data.get("success"):
+                m_name = data.get("month_name", "Mes actual")
+                added = data.get("added", "")
+                notes = data.get("notes", "").strip()
+                bullets = [f"• {n.strip()}" for n in notes.split(" | ") if n.strip()]
+                formatted_notes = "\n".join(bullets)
+                return (
+                    f"✅ <b>Nota registrada correctamente para {m_name}:</b>\n"
+                    f"<i>\"{added}\"</i>\n\n"
+                    f"📝 <b>Notas acumuladas ({m_name}):</b>\n{formatted_notes}"
+                )
+            else:
+                return f"❌ <b>Error al guardar la nota:</b> <code>{data.get('error', 'Desconocido')}</code>"
 
         return "📊 Consulta procesada correctamente."
 

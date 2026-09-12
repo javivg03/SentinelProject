@@ -673,6 +673,59 @@ class SheetsConnector:
             print(f"❌ Error en get_top_categories: {e}")
             return []
 
+    def get_monthly_notes(self, month: int = None) -> dict:
+        """
+        Consulta las notas del mes (filas 61 a 72, columna B).
+        """
+        try:
+            month = month or datetime.datetime.now().month
+            row_idx = 60 + month  # Enero (1) -> 61, ..., Septiembre (9) -> 69
+            month_name = self.MONTH_NAMES[month - 1]
+
+            val = self.matrix_sheet.cell(row_idx, 2).value
+            return {
+                "month": month,
+                "month_name": month_name,
+                "notes": str(val or "").strip(),
+            }
+        except Exception as e:
+            print(f"❌ Error en get_monthly_notes: {e}")
+            return {"month": month, "month_name": "Mes actual", "notes": ""}
+
+    def append_monthly_note(self, note_text: str, month: int = None) -> dict:
+        """
+        Añade una nota al final de la celda de notas del mes (filas 61 a 72, columna B).
+        """
+        try:
+            month = month or datetime.datetime.now().month
+            row_idx = 60 + month
+            month_name = self.MONTH_NAMES[month - 1]
+
+            current = str(self.matrix_sheet.cell(row_idx, 2).value or "").strip()
+            if current.lower() == "none":
+                current = ""
+            clean_note = note_text.strip()
+            if not clean_note:
+                return {"success": False, "error": "El texto de la nota está vacío."}
+
+            if current:
+                new_val = f"{current} | {clean_note}"
+            else:
+                new_val = clean_note
+
+            self.matrix_sheet.update_cell(row_idx, 2, new_val)
+            print(f"📝 Nota añadida a {month_name}: {clean_note}")
+            return {
+                "success": True,
+                "month": month,
+                "month_name": month_name,
+                "notes": new_val,
+                "added": clean_note,
+            }
+        except Exception as e:
+            print(f"❌ Error en append_monthly_note: {e}")
+            return {"success": False, "error": str(e)}
+
     # ─────────────────────────────────────────────────────────────────────────
     # COMPATIBILIDAD CON CÓDIGO ANTERIOR
     # ─────────────────────────────────────────────────────────────────────────

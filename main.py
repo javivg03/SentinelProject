@@ -3,6 +3,7 @@ import os
 import sys
 import logging
 import datetime
+import re
 
 # Fijar UTF-8 en la consola de Windows para evitar crasheos con emojis en los logs
 if sys.platform == "win32":
@@ -140,6 +141,7 @@ async def handle_financial_question(
     query_type = intent_data.get("query_type", "monthly_summary")
     month = intent_data.get("month")
     category = intent_data.get("category")
+    note_text = intent_data.get("note_text")
 
     data = None
     # Si se especificó una categoría concreta (ej. Nómina, Gasolina), siempre priorizarla
@@ -157,6 +159,21 @@ async def handle_financial_question(
         data = sheets.get_top_categories(month)
     elif query_type == "last_transactions":
         data = sheets.get_recent_transactions()
+    elif query_type == "get_notes":
+        data = sheets.get_monthly_notes(month)
+    elif query_type == "add_note":
+        raw_note = note_text
+        if not raw_note:
+            if ":" in user_question:
+                raw_note = user_question.split(":", 1)[1].strip()
+            else:
+                raw_note = re.sub(
+                    r"^(añade|agrega|pon|guarda|apunta|anota)\s+(una\s+)?nota(\s+(a|en)\s+\w+)?:\s*",
+                    "",
+                    user_question,
+                    flags=re.IGNORECASE,
+                ).strip()
+        data = sheets.append_monthly_note(raw_note, month)
     else:
         data = sheets.get_monthly_summary(month)
         query_type = "monthly_summary"
@@ -180,15 +197,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Comando /start — presenta las funcionalidades del bot."""
     await update.message.reply_text(
         "🛡️ <b>Sentinel: Auditor Financiero Personal</b>\n\n"
-        "Puedo ayudarte de tres formas:\n\n"
-        "📝 <b>Registro de gastos</b>: Escríbeme un gasto y lo registro.\n"
+        "Puedo ayudarte con:\n\n"
+        "📝 <b>Registro de gastos</b>: Escríbeme un gasto y lo registro en tu presupuesto.\n"
         "    <i>'Me he gastado 20€ en cena'</i>\n\n"
         "📎 <b>Extractos bancarios</b>: Adjunta tu Excel o PDF del banco.\n"
         "    Formatos: <code>.xls, .xlsx, .csv, .pdf</code>\n\n"
         "📊 <b>Consultas financieras</b>: Pregúntame por tus datos.\n"
         "    <i>'¿Cuánto llevo en gasolina?'</i>\n"
         "    <i>'¿Cuánto he ahorrado este mes?'</i>\n"
-        "    <i>'¿Cómo voy con el presupuesto?'</i>",
+        "    <i>'Dime los ingresos del mes pasado desglosados'</i>\n\n"
+        "📌 <b>Notas y recordatorios mensuales</b>:\n"
+        "    <i>'¿Qué notas tengo este mes?'</i>\n"
+        "    <i>'Añade nota a septiembre: pendiente 25€ de fianza'</i>",
         parse_mode=ParseMode.HTML,
     )
 

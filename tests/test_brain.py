@@ -100,3 +100,35 @@ def test_deterministic_income_breakdown(mock_client_cls):
     assert "10,00€" in formatted
     assert "3.927,66€" in formatted
 
+
+@patch("google.genai.Client")
+def test_deterministic_notes_formatting(mock_client_cls):
+    mock_client_cls.return_value = MagicMock()
+    brain = SentinelBrain()
+
+    # Test get_notes with content
+    data_notes = {
+        "month_name": "Septiembre",
+        "notes": "No pagado spoti marta | GYM: HSN 47,75-14 ali"
+    }
+    formatted = brain.format_query_response("get_notes", data_notes)
+    assert "Septiembre" in formatted
+    assert "• No pagado spoti marta" in formatted
+    assert "• GYM: HSN 47,75-14 ali" in formatted
+
+    # Test get_notes empty
+    formatted_empty = brain.format_query_response("get_notes", {"month_name": "Octubre", "notes": ""})
+    assert "No tienes notas registradas" in formatted_empty
+
+    # Test add_note success
+    data_added = {
+        "success": True,
+        "month_name": "Septiembre",
+        "added": "Pendiente fianza 25€",
+        "notes": "No pagado spoti marta | Pendiente fianza 25€"
+    }
+    formatted_add = brain.format_query_response("add_note", data_added)
+    assert "Pendiente fianza 25€" in formatted_add
+    assert "Nota registrada correctamente" in formatted_add
+
+
