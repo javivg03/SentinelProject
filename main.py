@@ -346,6 +346,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
+    if intent == "error":
+        # Ni el clasificador rápido ni Gemini pudieron interpretar el
+        # mensaje (típicamente cuota de la API agotada). Antes esto caía
+        # silenciosamente en "log" y el bot se quedaba sin responder nada.
+        await update.message.reply_text(
+            "⚠️ No pude entender tu mensaje ahora mismo — el servicio de IA "
+            "no está disponible (posible límite de cuota o fallo temporal). "
+            "Inténtalo de nuevo en un minuto."
+        )
+        return
+
     # ── intent == "log": registrar transacción ───────────────────────────────
     history_str = "\n".join(context.user_data["history"])
     resultado, status = brain.process_transaction(clean_text, history=history_str)
@@ -354,6 +365,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         context.user_data["history"].append(f"Usuario: {clean_text}")
         context.user_data["history"] = context.user_data["history"][-4:]
         await update.message.reply_text(resultado)
+        return
+
+    if status == "ERROR":
+        # process_transaction también depende de Gemini: si falla (cuota,
+        # red...) hay que avisar, nunca dejar el mensaje sin respuesta.
+        await update.message.reply_text(
+            "⚠️ No pude registrar tu movimiento ahora mismo (error de IA). "
+            f"Inténtalo de nuevo en un minuto.\n<code>{str(resultado)[:300]}</code>",
+            parse_mode=ParseMode.HTML,
+        )
         return
 
     if status == "SUCCESS":

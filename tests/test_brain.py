@@ -31,6 +31,42 @@ def test_brain_success(mock_client_cls):
 
 
 @patch("google.genai.Client")
+def test_classify_intent_returns_error_when_gemini_fails_and_ambiguous(mock_client_cls):
+    """
+    Si Gemini falla (ej. cuota agotada) y el mensaje no encaja con ninguna
+    palabra clave de consulta ni de registro, antes se asumía "log" a
+    ciegas -> segundo intento fallido contra Gemini -> el bot se quedaba
+    sin responder nada. Ahora debe admitir el fallo explícitamente.
+    """
+    mock_instance = MagicMock()
+    mock_client_cls.return_value = mock_instance
+    mock_instance.models.generate_content.side_effect = RuntimeError(
+        "429 RESOURCE_EXHAUSTED: quota exceeded"
+    )
+
+    brain = SentinelBrain()
+    result = brain.classify_intent("Y de nomina")
+
+    assert result["intent"] == "error"
+    assert result["raw_message"] == "Y de nomina"
+
+
+@patch("google.genai.Client")
+def test_classify_intent_falls_back_to_query_heuristics_when_gemini_fails(mock_client_cls):
+    """Si el mensaje sí encaja con palabras clave de consulta, se mantiene el fallback heurístico."""
+    mock_instance = MagicMock()
+    mock_client_cls.return_value = mock_instance
+    mock_instance.models.generate_content.side_effect = RuntimeError("429 RESOURCE_EXHAUSTED")
+
+    brain = SentinelBrain()
+    result = brain.classify_intent("¿Cuánto llevo de nómina?")
+
+    assert result["intent"] == "query"
+    assert result["query_type"] == "category_total"
+    assert result["category"] == "Nómina"
+
+
+@patch("google.genai.Client")
 def test_brain_doubt(mock_client_cls):
     mock_instance = MagicMock()
     mock_client_cls.return_value = mock_instance

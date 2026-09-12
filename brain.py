@@ -77,7 +77,7 @@ class SentinelBrain:
         Maneja los casos obvios de REGISTRO sin llamar a la API de Gemini,
         ahorrando ~50% de llamadas en uso rutinario.
         """
-        t = text.lower().strip()
+        t = text.lower().strip().lstrip("¿¡")
 
         # Patrones que indican CONSULTA financiera
         QUERY_STARTERS = (
@@ -157,7 +157,12 @@ class SentinelBrain:
                     return {"intent": "query", "query_type": "get_notes"}
                 return {"intent": "query", "query_type": "monthly_summary"}
 
-            return {"intent": "log"}
+            # Ni el clasificador rápido ni Gemini pudieron determinar la
+            # intención (ej. cuota de la API agotada). Antes esto asumía
+            # "log" a ciegas, lo que llevaba a un segundo intento fallido
+            # contra Gemini en process_transaction y el bot se quedaba sin
+            # responder nada. Mejor admitir el fallo explícitamente.
+            return {"intent": "error", "raw_message": user_message}
 
     # ─────────────────────────────────────────────────────────────────────────
     # PROCESAMIENTO DE TRANSACCIONES (REGISTRO)
