@@ -39,9 +39,12 @@ class SheetsConnector:
        - Objetivos de gasto mensual para alertas automáticas.
     """
 
+    # 'drive.file' (no 'drive' completo): acceso solo a los ficheros que la
+    # cuenta de servicio crea o que se le comparten explícitamente, en vez de
+    # a todo el Google Drive del usuario (principio de mínimo privilegio).
     SCOPES = [
         "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/drive.file",
     ]
 
     MONTH_NAMES = [

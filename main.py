@@ -4,6 +4,8 @@ import sys
 import logging
 import datetime
 import re
+import uuid
+import tempfile
 
 # Fijar UTF-8 en la consola de Windows para evitar crasheos con emojis en los logs
 if sys.platform == "win32":
@@ -41,11 +43,24 @@ load_dotenv()
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
+ALLOWED_CHAT_ID = os.getenv("ALLOWED_CHAT_ID")
+
+if not ALLOWED_CHAT_ID:
+    logger.warning(
+        "⚠️ ALLOWED_CHAT_ID no está configurado. Sentinel rechazará TODOS los "
+        "mensajes hasta que definas tu chat_id en las variables de entorno "
+        "(privacidad/zero-trust: el bot es personal, no debe responder a nadie más)."
+    )
 
 # Módulos compartidos — instanciados una sola vez al arrancar
 sanitizer = DataSanitizer()
 brain = SentinelBrain()
 sheets = SheetsConnector()
+
+# Lock para serializar escrituras en Google Sheets y evitar condiciones de
+# carrera si llegan dos updates casi simultáneos (ej. webhook con varias
+# peticiones concurrentes en Render).
+sheets_write_lock = asyncio.Lock()
 
 # Importe mínimo (€) para solicitar revisión manual en categoría "Otros"
 REVIEW_THRESHOLD = 5.0
@@ -62,6 +77,39 @@ REVIEW_KEYBOARD_ROWS = [
     ["Nómina", "Suscripción Disney", "Otros"],
     ["⏭️ Ignorar (no registrar)"],
 ]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1b. AUTORIZACIÓN — Sentinel es un bot personal, no debe atender a terceros
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _is_authorized(update: Update) -> bool:
+    """
+    Verifica que el mensaje/callback proviene del chat autorizado.
+
+    Sentinel maneja patrimonio y datos financieros personales; sin este check
+    cualquier usuario que descubra el bot en Telegram podría leerlos o escribir
+    en la hoja de cálculo.
+    """
+    if not ALLOWED_CHAT_ID or not update.effective_chat:
+        return False
+    return str(update.effective_chat.id) == str(ALLOWED_CHAT_ID)
+
+
+async def _reject_unauthorized(update: Update) -> None:
+    """Registra el intento y, si es posible, informa al remitente."""
+    chat = update.effective_chat
+    logger.warning(
+        f"🚫 Acceso no autorizado bloqueado — chat_id={chat.id if chat else 'desconocido'}"
+    )
+    if update.message:
+        await update.message.reply_text(
+            "🚫 Este bot es de uso personal y no está disponible para tu cuenta."
+        )
+    elif update.callback_query:
+        await update.callback_query.answer(
+            "🚫 No autorizado.", show_alert=True
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -173,7 +221,8 @@ async def handle_financial_question(
                     user_question,
                     flags=re.IGNORECASE,
                 ).strip()
-        data = sheets.append_monthly_note(raw_note, month)
+        async with sheets_write_lock:
+            data = sheets.append_monthly_note(raw_note, month)
     else:
         data = sheets.get_monthly_summary(month)
         query_type = "monthly_summary"
@@ -195,6 +244,10 @@ async def handle_financial_question(
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Comando /start — presenta las funcionalidades del bot."""
+    if not _is_authorized(update):
+        await _reject_unauthorized(update)
+        return
+
     await update.message.reply_text(
         "🛡️ <b>Sentinel: Auditor Financiero Personal</b>\n\n"
         "Puedo ayudarte con:\n\n"
@@ -221,6 +274,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     query = update.callback_query
     await query.answer()  # Elimina el spinner de carga del botón en Telegram
 
+    if not _is_authorized(update):
+        await _reject_unauthorized(update)
+        return
+
     if not query.data.startswith("CAT:"):
         return
 
@@ -237,12 +294,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if chosen_category == "⏭️ Ignorar (no registrar)":
         logger.info(f"Ignorado por el usuario: {item['concepto']} ({item['importe']}€)")
     else:
-        sheets.log_expense(
-            item["concepto"],
-            chosen_category,
-            str(item["importe"]),
-            item.get("fecha"),
-        )
+        async with sheets_write_lock:
+            sheets.log_expense(
+                item["concepto"],
+                chosen_category,
+                str(item["importe"]),
+                item.get("fecha"),
+            )
         logger.info(
             f"Categorizado manualmente: {item['concepto']} → {chosen_category} ({item['importe']}€)"
         )
@@ -258,6 +316,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     1. classify_intent() determina si el usuario quiere registrar, consultar o analizar
     2. Se enruta al handler apropiado según la intención detectada
     """
+    if not _is_authorized(update):
+        await _reject_unauthorized(update)
+        return
+
     raw_text = update.message.text
     if "history" not in context.user_data:
         context.user_data["history"] = []
@@ -301,13 +363,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         budget_alerts = []
 
         for item in resultado:
-            res = sheets.log_expense(
-                item["concepto"],
-                item["categoria"],
-                str(item["importe"]),
-                item.get("fecha"),
-                item.get("tipo"),
-            )
+            async with sheets_write_lock:
+                res = sheets.log_expense(
+                    item["concepto"],
+                    item["categoria"],
+                    str(item["importe"]),
+                    item.get("fecha"),
+                    item.get("tipo"),
+                )
             if isinstance(res, dict) and res.get("success"):
                 registrados += 1
                 new_tot = res.get("new_total", 0.0)
@@ -364,8 +427,15 @@ async def handle_document(
     5. Registra automáticamente lo categorizable
     6. Encola en 'pending_review' lo que va a 'Otros' (>REVIEW_THRESHOLD€)
     """
+    if not _is_authorized(update):
+        await _reject_unauthorized(update)
+        return
+
     document = update.message.document
-    ext = document.file_name.split(".")[-1].lower()
+    # os.path.basename() evita path traversal si el nombre de archivo enviado
+    # por Telegram contiene "../" u otros separadores de directorio.
+    safe_file_name = os.path.basename(document.file_name)
+    ext = safe_file_name.split(".")[-1].lower()
 
     if ext not in ["xls", "xlsx", "csv", "pdf"]:
         await update.message.reply_text(
@@ -376,7 +446,9 @@ async def handle_document(
         return
 
     msg = await update.message.reply_text("📥 Descargando y procesando documento...")
-    local_path = f"temp_{document.file_name}"
+    local_path = os.path.join(
+        tempfile.gettempdir(), f"sentinel_{uuid.uuid4().hex}.{ext}"
+    )
 
     try:
         file_obj = await context.bot.get_file(document.file_id)
@@ -416,7 +488,8 @@ async def handle_document(
         await msg.edit_text(
             f"📦 Registrando {len(to_register)} transacciones en Google Sheets..."
         )
-        total_insertados = sheets.batch_log_expenses(to_register)
+        async with sheets_write_lock:
+            total_insertados = sheets.batch_log_expenses(to_register)
 
         if to_review:
             context.user_data["pending_review"] = to_review
@@ -449,6 +522,10 @@ async def handle_document(
 
 async def debug_sheet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Comando /debug — muestra estado de conexión y datos clave en tiempo real."""
+    if not _is_authorized(update):
+        await _reject_unauthorized(update)
+        return
+
     now_m = datetime.datetime.now().month
     summary = sheets.get_monthly_summary(now_m)
     patrimony = sheets.get_patrimony()

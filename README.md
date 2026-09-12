@@ -35,6 +35,8 @@ Diseñado con formación en Derecho, Ciberseguridad y Protección de Datos:
 - **Data Sanitizer**: Antes de enviar cualquier mensaje o documento a la API de Gemini, un filtro regex redacta de forma irreversible datos sensibles como IBANs, números de tarjetas de crédito, correos electrónicos, DNIs y números de teléfono (`[REDACTED]`).
 - **Eliminación Efímera**: Los extractos bancarios subidos en Telegram se procesan en memoria / directorio temporal y se destruyen inmediatamente tras su inserción en Google Sheets.
 - **Gestión de Secretos**: Ninguna credencial o clave vive en el código fuente; todo se inyecta por variables de entorno y archivos ignorados en git.
+- **Control de Acceso**: El bot verifica el `chat_id` de Telegram en cada mensaje (`ALLOWED_CHAT_ID`) y rechaza por defecto (fail-closed) a cualquiera que no sea el propietario, ya que Sentinel maneja patrimonio y datos financieros personales.
+- **Mínimo Privilegio en Google**: La cuenta de servicio solo solicita el scope `drive.file` (acceso al Sheet compartido explícitamente), no acceso completo a Google Drive.
 
 ### 5. Alta Disponibilidad y Mitigación del Cold-Start
 - En la capa gratuita de hosting (Render), los contenedores hibernan tras 15 minutos de inactividad.
@@ -69,15 +71,15 @@ SentinelProject/
 │   └── query_prompt.txt         # Clasificador estructurado de intenciones y parámetros
 ├── tests/
 │   ├── test_brain.py            # Tests de inferencia de IA y formato determinista
+│   ├── test_main.py             # Tests de autorización por chat_id
 │   ├── test_sanitizer.py        # Tests del filtro de datos personales (Zero-Trust)
-│   └── test_sheets_logic.py     # Tests de normalización y parsing de moneda europea
+│   └── test_sheets_logic.py     # Tests de escritura/lectura determinista y normalización
 ├── main.py                      # Orquestador principal, webhook y handlers de Telegram
 ├── brain.py                     # Interfaz con Gemini y formateador de consultas
 ├── sheets_connector.py          # Conector matricial y determinista de Google Sheets
 ├── sanitizer.py                 # Sanitizador de privacidad (IBAN, DNI, tarjetas)
 ├── document_parser.py           # Parser de extractos bancarios (.xls, .xlsx, .pdf)
-├── bank_connector.py            # ⚠️ Histórico: análisis normativo PSD2 / Open Banking
-├── requirements.txt             # Dependencias del proyecto
+├── requirements.txt             # Dependencias del proyecto (versiones fijadas)
 ├── Dockerfile                   # Contenedor para despliegue en Render
 └── docs/
     ├── ARCHITECTURE.md          # Diagramas de flujo y arquitectura detallada
@@ -104,7 +106,10 @@ Crea un archivo `.env` en la raíz del proyecto (basado en `.env.example`):
 TELEGRAM_TOKEN=tu_token_de_telegram_botfather
 GOOGLE_API_KEY=tu_api_key_de_google_ai_studio
 SPREADSHEET_ID=id_del_google_sheet
+ALLOWED_CHAT_ID=tu_chat_id_de_telegram
 ```
+
+`ALLOWED_CHAT_ID` es obligatorio: sin él, Sentinel rechaza todos los mensajes (fail-closed) para que solo tu chat pueda leer tu patrimonio o registrar movimientos. Consíguelo hablando con `@userinfobot` en Telegram.
 
 Coloca tu archivo `service_account.json` (cuenta de servicio con permisos de Editor en el Sheet) en la raíz del proyecto.
 
