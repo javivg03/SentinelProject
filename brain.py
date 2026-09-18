@@ -82,10 +82,10 @@ class SentinelBrain:
         # Patrones que indican CONSULTA financiera
         QUERY_STARTERS = (
             "cuánto", "cuanto", "qué", "que", "cuál", "cual",
-            "cuáles", "cuales", "cómo", "como", "dónde",
-            "muestra", "dame", "dime", "enseñame", "lista",
+            "cuáles", "cuales", "cómo", "como", "dónde", "cuándo", "cuando",
+            "muestra", "dame", "dime", "enseñame", "lista", "busca",
             "resumen", "presupuesto", "balance", "informe",
-            "patrimonio", "ahorro", "nota", "notas", "apunta",
+            "patrimonio", "ahorro", "nota", "notas", "apunta", "borra", "elimina",
         )
         if any(t.startswith(w) for w in QUERY_STARTERS):
             return "query"
@@ -149,12 +149,17 @@ class SentinelBrain:
                 if "top" in msg_lower or "mas" in msg_lower or "más" in msg_lower:
                     return {"intent": "query", "query_type": "top_categories"}
                 if "nota" in msg_lower or "notas" in msg_lower or "comentario" in msg_lower:
+                    if any(w in msg_lower for w in ("borra", "borrar", "elimina", "eliminar", "quita", "quitar")):
+                        note_txt = user_message.split(":", 1)[1].strip() if ":" in user_message else None
+                        return {"intent": "query", "query_type": "delete_note", "note_text": note_txt}
                     if any(w in msg_lower for w in ("añade", "agrega", "pon", "guarda", "apunta", "anota")):
                         note_txt = user_message
                         if ":" in user_message:
                             note_txt = user_message.split(":", 1)[1].strip()
                         return {"intent": "query", "query_type": "add_note", "note_text": note_txt}
                     return {"intent": "query", "query_type": "get_notes"}
+                if "busca" in msg_lower or "cuando compr" in msg_lower or "cuándo compr" in msg_lower:
+                    return {"intent": "query", "query_type": "search_transaction", "search_term": user_message}
                 return {"intent": "query", "query_type": "monthly_summary"}
 
             # Ni el clasificador rápido ni Gemini pudieron determinar la
@@ -239,16 +244,17 @@ class SentinelBrain:
         de los datos numéricos extraídos de Google Sheets.
         """
         # Distingue "no hay dato real" (dict/lista vacíos) de "no se pudo
-        # leer Sheets" (None, o dict con clave "error"): un fallo técnico no
-        # debe presentarse como si el saldo real fuera 0,00€.
-        if data is None or (isinstance(data, dict) and data.get("error")):
+        # leer Sheets" (None, o dict con clave "error" SIN "success"): un
+        # fallo técnico no debe presentarse como si el saldo real fuera
+        # 0,00€. Los dicts de ESCRITURA (add_note, delete_note...) siempre
+        # incluyen "success" con su propio "error" de negocio (nota vacía,
+        # no encontrada...) — esos deben llegar a su rama específica más
+        # abajo, no confundirse aquí con un fallo de conexión.
+        if data is None or (isinstance(data, dict) and "success" not in data and data.get("error")):
             return (
                 "⚠️ No pude leer tus datos ahora mismo "
                 "(error de conexión con Google Sheets). Inténtalo de nuevo en unos segundos."
             )
-
-        if not data:
-            return "⚠️ No encontré datos para esa consulta en tu hoja de cálculo."
 
         # ── 1. Consulta de Patrimonio ─────────────────────────────────────
         if query_type == "patrimony":
@@ -388,6 +394,35 @@ class SentinelBrain:
                 )
             else:
                 return f"❌ <b>Error al guardar la nota:</b> <code>{data.get('error', 'Desconocido')}</code>"
+
+        # ── 8. Búsqueda de un movimiento concreto en el log de auditoría ──
+        elif query_type == "search_transaction":
+            items = data if isinstance(data, list) else []
+            if not items:
+                return "🔍 No encontré ningún movimiento que coincida con esa búsqueda."
+
+            lines = ["🔍 <b>Movimientos encontrados:</b>\n"]
+            for it in items:
+                lines.append(
+                    f"• <code>{it['fecha']}</code> | <b>{it['concepto']}</b> ({it['categoria']}): "
+                    f"<code>{self._format_euro(it['importe'])}</code>"
+                )
+            return "\n".join(lines)
+
+        # ── 9. Borrar Nota Mensual ─────────────────────────────────────────
+        elif query_type == "delete_note":
+            if data.get("success"):
+                m_name = data.get("month_name", "Mes actual")
+                removed = data.get("removed", [])
+                notes = data.get("notes", "").strip()
+                removed_str = "\n".join(f"• {r}" for r in removed)
+                header = f"🗑️ <b>Nota(s) eliminada(s) de {m_name}:</b>\n{removed_str}"
+                if notes:
+                    bullets = [f"• {n.strip()}" for n in notes.split(" | ") if n.strip()]
+                    return header + f"\n\n📝 <b>Notas restantes ({m_name}):</b>\n" + "\n".join(bullets)
+                return header + f"\n\n📝 No quedan más notas para {m_name}."
+            else:
+                return f"❌ <b>No pude borrar la nota:</b> <code>{data.get('error', 'Desconocido')}</code>"
 
         return "📊 Consulta procesada correctamente."
 

@@ -196,3 +196,121 @@ def test_validate_matrix_layout_warns_on_mismatch(capsys):
 
     captured = capsys.readouterr()
     assert "ALERTA DE INTEGRIDAD" in captured.out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# search_transactions — búsqueda de un movimiento concreto por concepto
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _fake_transactions_rows():
+    return [
+        ["Fecha", "Concepto", "Categoría", "Importe", "Tipo"],  # cabecera
+        ["2026-06-15", "Entrada Hard GZ", "Fiesta", "35", "GASTO"],
+        ["2026-07-02", "Mercadona", "Supermercado", "42,50", "GASTO"],
+        ["2026-09-10", "Zara camisa", "Ropa", "29,99", "GASTO"],
+    ]
+
+
+def test_search_transactions_finds_match_case_and_accent_insensitive():
+    sc = _make_connector()
+    sc.transactions_sheet.get_all_values.return_value = _fake_transactions_rows()
+
+    results = sc.search_transactions("hard gz")
+
+    assert len(results) == 1
+    assert results[0]["concepto"] == "Entrada Hard GZ"
+    assert results[0]["importe"] == 35.0
+    assert results[0]["fecha"] == "2026-06-15"
+
+
+def test_search_transactions_no_match_returns_empty_list():
+    sc = _make_connector()
+    sc.transactions_sheet.get_all_values.return_value = _fake_transactions_rows()
+
+    assert sc.search_transactions("netflix") == []
+
+
+def test_search_transactions_most_recent_first():
+    sc = _make_connector()
+    sc.transactions_sheet.get_all_values.return_value = [
+        ["Fecha", "Concepto", "Categoría", "Importe", "Tipo"],
+        ["2026-01-01", "Zara pantalón", "Ropa", "20", "GASTO"],
+        ["2026-09-01", "Zara camisa", "Ropa", "30", "GASTO"],
+    ]
+
+    results = sc.search_transactions("zara")
+
+    assert [r["concepto"] for r in results] == ["Zara camisa", "Zara pantalón"]
+
+
+def test_search_transactions_handles_exception_gracefully():
+    sc = _make_connector()
+    sc.transactions_sheet.get_all_values.side_effect = RuntimeError("fallo de red")
+
+    assert sc.search_transactions("algo") is None
+
+
+def test_search_transactions_no_transactions_sheet_returns_empty():
+    sc = _make_connector()
+    sc.transactions_sheet = None
+
+    assert sc.search_transactions("algo") == []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# delete_monthly_note — borrar una nota concreta por palabra clave
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_delete_monthly_note_removes_matching_bullet():
+    sc = _make_connector()
+    sc.matrix_sheet.cell.return_value.value = "No pagado spoti marta | Pendiente fianza 25€"
+
+    result = sc.delete_monthly_note("fianza", month=9)
+
+    assert result["success"] is True
+    assert result["removed"] == ["Pendiente fianza 25€"]
+    assert result["notes"] == "No pagado spoti marta"
+    row, col, new_val = sc.matrix_sheet.update_cell.call_args[0]
+    assert (row, col, new_val) == (69, 2, "No pagado spoti marta")
+
+
+def test_delete_monthly_note_removes_all_matches():
+    sc = _make_connector()
+    sc.matrix_sheet.cell.return_value.value = "Gym HSN 47,75 | Gym febrero pendiente | Otra nota"
+
+    result = sc.delete_monthly_note("gym", month=9)
+
+    assert result["success"] is True
+    assert set(result["removed"]) == {"Gym HSN 47,75", "Gym febrero pendiente"}
+    assert result["notes"] == "Otra nota"
+
+
+def test_delete_monthly_note_no_match_reports_error_without_writing():
+    sc = _make_connector()
+    sc.matrix_sheet.cell.return_value.value = "No pagado spoti marta"
+
+    result = sc.delete_monthly_note("inexistente", month=9)
+
+    assert result["success"] is False
+    assert "error" in result
+    sc.matrix_sheet.update_cell.assert_not_called()
+
+
+def test_delete_monthly_note_empty_notes_reports_error():
+    sc = _make_connector()
+    sc.matrix_sheet.cell.return_value.value = ""
+
+    result = sc.delete_monthly_note("fianza", month=9)
+
+    assert result["success"] is False
+    assert "error" in result
+
+
+def test_delete_monthly_note_handles_exception_gracefully():
+    sc = _make_connector()
+    sc.matrix_sheet.cell.side_effect = RuntimeError("fallo de red")
+
+    result = sc.delete_monthly_note("fianza", month=9)
+
+    assert result["success"] is False
+    assert "error" in result

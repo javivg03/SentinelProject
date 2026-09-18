@@ -168,3 +168,81 @@ def test_deterministic_notes_formatting(mock_client_cls):
     assert "Nota registrada correctamente" in formatted_add
 
 
+@patch("google.genai.Client")
+def test_format_search_transaction_with_results(mock_client_cls):
+    mock_client_cls.return_value = MagicMock()
+    brain = SentinelBrain()
+
+    data = [
+        {"fecha": "2026-06-15", "concepto": "Entrada Hard GZ", "categoria": "Fiesta", "importe": 35.0, "tipo": "GASTO"},
+    ]
+    formatted = brain.format_query_response("search_transaction", data)
+    assert "Entrada Hard GZ" in formatted
+    assert "35,00€" in formatted
+    assert "2026-06-15" in formatted
+
+
+@patch("google.genai.Client")
+def test_format_search_transaction_no_results(mock_client_cls):
+    mock_client_cls.return_value = MagicMock()
+    brain = SentinelBrain()
+
+    formatted = brain.format_query_response("search_transaction", [])
+    assert "No encontré ningún movimiento" in formatted
+
+
+@patch("google.genai.Client")
+def test_format_delete_note_success(mock_client_cls):
+    mock_client_cls.return_value = MagicMock()
+    brain = SentinelBrain()
+
+    data = {
+        "success": True,
+        "month_name": "Septiembre",
+        "removed": ["Pendiente fianza 25€"],
+        "notes": "No pagado spoti marta",
+    }
+    formatted = brain.format_query_response("delete_note", data)
+    assert "eliminada" in formatted.lower()
+    assert "Pendiente fianza 25€" in formatted
+    assert "No pagado spoti marta" in formatted
+
+
+@patch("google.genai.Client")
+def test_format_delete_note_failure(mock_client_cls):
+    mock_client_cls.return_value = MagicMock()
+    brain = SentinelBrain()
+
+    data = {"success": False, "error": "No encontré ninguna nota que contenga 'x' en Septiembre."}
+    formatted = brain.format_query_response("delete_note", data)
+    assert "No pude borrar la nota" in formatted
+
+
+@patch("google.genai.Client")
+def test_format_add_note_business_failure_is_not_confused_with_connection_error(mock_client_cls):
+    """
+    Regresión: add_note/delete_note reportan sus propios fallos de negocio
+    (nota vacía, no encontrada...) con {"success": False, "error": ...}. El
+    chequeo genérico de "fallo de lectura de Sheets" no debe interceptarlos
+    y mostrar un falso "error de conexión" en su lugar.
+    """
+    mock_client_cls.return_value = MagicMock()
+    brain = SentinelBrain()
+
+    data = {"success": False, "error": "El texto de la nota está vacío."}
+    formatted = brain.format_query_response("add_note", data)
+
+    assert "Error al guardar la nota" in formatted
+    assert "conexión" not in formatted.lower()
+
+
+@patch("google.genai.Client")
+def test_format_query_reports_read_failure_distinctly_from_zero(mock_client_cls):
+    """El fallo de lectura de Sheets (dict SIN 'success') sí debe avisar de un error de conexión."""
+    mock_client_cls.return_value = MagicMock()
+    brain = SentinelBrain()
+
+    formatted = brain.format_query_response("monthly_summary", {"error": "API caída"})
+    assert "No pude leer tus datos" in formatted
+
+

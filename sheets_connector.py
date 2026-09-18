@@ -728,6 +728,43 @@ class SheetsConnector:
             print(f"❌ Error en get_recent_transactions: {e}")
             return None
 
+    def search_transactions(self, keyword: str, limit: int = 5) -> list | None:
+        """
+        Busca en el log de auditoría 'Transacciones' los movimientos cuyo
+        concepto contenga 'keyword' (sin acentos ni mayúsculas). Devuelve los
+        más recientes primero. None si falla la lectura, [] si no hay
+        coincidencias.
+        """
+        if not self.transactions_sheet:
+            return []
+        try:
+            clean_keyword = _normalize_text(keyword)
+            if not clean_keyword:
+                return []
+
+            all_rows = self.transactions_sheet.get_all_values()
+            data_rows = all_rows[1:] if len(all_rows) > 1 else []
+
+            matches = []
+            for r in data_rows:
+                concepto = r[1] if len(r) > 1 else ""
+                if clean_keyword in _normalize_text(concepto):
+                    matches.append(
+                        {
+                            "fecha": r[0] if len(r) > 0 else "",
+                            "concepto": concepto,
+                            "categoria": r[2] if len(r) > 2 else "",
+                            "importe": self._clean_value(r[3]) if len(r) > 3 else 0.0,
+                            "tipo": r[4] if len(r) > 4 else "GASTO",
+                        }
+                    )
+
+            matches.reverse()  # 'Transacciones' es append-only: el final es lo más reciente
+            return matches[:limit]
+        except Exception as e:
+            print(f"❌ Error en search_transactions: {e}")
+            return None
+
     def get_top_categories(self, month: int = None, limit: int = 5) -> list | None:
         """Devuelve las categorías con mayor gasto en el mes indicado (None si falla la lectura)."""
         try:
@@ -803,6 +840,52 @@ class SheetsConnector:
             }
         except Exception as e:
             print(f"❌ Error en append_monthly_note: {e}")
+            return {"success": False, "error": str(e)}
+
+    def delete_monthly_note(self, keyword: str, month: int = None) -> dict:
+        """
+        Elimina la(s) nota(s) del mes cuyo texto contenga 'keyword' (sin
+        acentos ni mayúsculas). Si varias notas coinciden, se eliminan todas
+        y se informa cuáles, para que el usuario pueda revisarlo — nunca se
+        adivina "cuál" en silencio.
+        """
+        try:
+            month = month or datetime.datetime.now().month
+            row_idx = 60 + month
+            month_name = self.MONTH_NAMES[month - 1]
+
+            clean_keyword = _normalize_text(keyword)
+            if not clean_keyword:
+                return {"success": False, "error": "No especificaste qué nota borrar."}
+
+            current = str(self.matrix_sheet.cell(row_idx, 2).value or "").strip()
+            if current.lower() == "none":
+                current = ""
+            if not current:
+                return {"success": False, "error": f"No hay notas registradas en {month_name}."}
+
+            bullets = [b.strip() for b in current.split(" | ") if b.strip()]
+            removed = [b for b in bullets if clean_keyword in _normalize_text(b)]
+            remaining = [b for b in bullets if clean_keyword not in _normalize_text(b)]
+
+            if not removed:
+                return {
+                    "success": False,
+                    "error": f"No encontré ninguna nota que contenga '{keyword}' en {month_name}.",
+                }
+
+            new_val = " | ".join(remaining)
+            self.matrix_sheet.update_cell(row_idx, 2, new_val)
+            print(f"🗑️ Nota(s) eliminada(s) de {month_name}: {removed}")
+            return {
+                "success": True,
+                "month": month,
+                "month_name": month_name,
+                "removed": removed,
+                "notes": new_val,
+            }
+        except Exception as e:
+            print(f"❌ Error en delete_monthly_note: {e}")
             return {"success": False, "error": str(e)}
 
     # ─────────────────────────────────────────────────────────────────────────

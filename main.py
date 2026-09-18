@@ -186,12 +186,15 @@ async def handle_financial_question(
     msg = await update.message.reply_text("📊 Consultando tus datos financieros...")
 
     intent_data = intent_data or {}
-    query_type = intent_data.get("query_type", "monthly_summary")
+    query_type = intent_data.get("query_type")
     month = intent_data.get("month")
     category = intent_data.get("category")
     note_text = intent_data.get("note_text")
+    search_term = intent_data.get("search_term")
 
     data = None
+    recognized = True
+
     # Si se especificó una categoría concreta (ej. Nómina, Gasolina), siempre priorizarla
     if category:
         data = sheets.get_category_spending(category, month)
@@ -207,6 +210,9 @@ async def handle_financial_question(
         data = sheets.get_top_categories(month)
     elif query_type == "last_transactions":
         data = sheets.get_recent_transactions()
+    elif query_type == "search_transaction":
+        keyword = search_term or note_text or user_question
+        data = sheets.search_transactions(keyword)
     elif query_type == "get_notes":
         data = sheets.get_monthly_notes(month)
     elif query_type == "add_note":
@@ -223,9 +229,34 @@ async def handle_financial_question(
                 ).strip()
         async with sheets_write_lock:
             data = sheets.append_monthly_note(raw_note, month)
+    elif query_type == "delete_note":
+        keyword = note_text
+        if not keyword:
+            if ":" in user_question:
+                keyword = user_question.split(":", 1)[1].strip()
+            else:
+                keyword = re.sub(
+                    r"^(borra|borrar|elimina|eliminar|quita|quitar)\s+(la\s+)?nota(\s+(de|sobre))?\s*",
+                    "",
+                    user_question,
+                    flags=re.IGNORECASE,
+                ).strip()
+                keyword = re.sub(r"^(de|del|en)\s+\w+\s*", "", keyword, flags=re.IGNORECASE).strip()
+        async with sheets_write_lock:
+            data = sheets.delete_monthly_note(keyword, month)
     else:
-        data = sheets.get_monthly_summary(month)
-        query_type = "monthly_summary"
+        recognized = False
+
+    if not recognized:
+        # No fingir un resumen que el usuario no pidió: mejor admitir que no
+        # se entendió la consulta que inventarse una respuesta plausible.
+        await msg.edit_text(
+            "🤔 No entendí bien qué querías consultar o hacer. Prueba a reformularlo, por ejemplo:\n"
+            "<i>'¿cuánto llevo en gasolina?'</i>, <i>'¿cuál es mi patrimonio?'</i>, "
+            "<i>'¿cuándo compré X?'</i> o <i>'¿qué notas tengo en septiembre?'</i>.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
 
     answer = brain.format_query_response(query_type, data, user_question)
     await msg.edit_text(answer, parse_mode=ParseMode.HTML)
@@ -332,7 +363,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     intent = intent_data.get("intent", "log")
 
     # ── Paso 2: Enrutar según intención ─────────────────────────────────────
-    if intent in ("query", "analysis"):
+    if intent == "query":
         await handle_financial_question(update, clean_text, intent_data, context)
         return
 
@@ -341,7 +372,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(
             "🤔 No estoy seguro de lo que quieres hacer.\n"
             "Puedes registrar un gasto (<i>'25€ en Mercadona'</i>) "
-            "o consultarme algo (<i>'¿cuánto llevo en gasolina?'</i> o <i>'¿cuál es mi patrimonio?'</i>).",
+            "o consultarme algo (<i>'¿cuánto llevo en gasolina?'</i> o <i>'¿cuál es mi patrimonio?'</i>).\n\n"
+            "Si tu mensaje mezclaba dos cosas a la vez (ej. registrar un gasto Y "
+            "añadir una nota), mándamelas en dos mensajes separados — así no me "
+            "arriesgo a hacer solo una y que la otra se pierda.",
             parse_mode=ParseMode.HTML,
         )
         return
@@ -418,8 +452,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             final_response += "\n".join(budget_alerts) + "\n\n"
 
         if registrados > 0 and fallidos == 0:
+            # Sin línea de confirmación extra: el desglose de arriba ya deja
+            # claro que se registró. Solo se avisa explícitamente en caso de
+            # error (parcial o total), más abajo.
             await update.message.reply_text(
-                final_response + "✅ Movimiento registrado en matriz y log.",
+                final_response.rstrip(),
                 parse_mode=ParseMode.HTML,
             )
         elif registrados > 0:
