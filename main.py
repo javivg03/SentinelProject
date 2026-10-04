@@ -191,6 +191,7 @@ async def handle_financial_question(
     category = intent_data.get("category")
     note_text = intent_data.get("note_text")
     search_term = intent_data.get("search_term")
+    section = intent_data.get("section")
 
     data = None
     recognized = True
@@ -204,8 +205,19 @@ async def handle_financial_question(
         query_type = "income_breakdown"
     elif query_type == "patrimony":
         data = sheets.get_patrimony()
+    elif query_type == "monthly_expenses":
+        data = sheets.get_monthly_summary(month)
     elif query_type in ("monthly_summary", "monthly_savings", "monthly_income"):
         data = sheets.get_monthly_summary(month)
+    elif query_type == "section_breakdown":
+        section = (section or "").strip().lower()
+        if section == "ingresos":
+            data = sheets.get_income_breakdown(month)
+            query_type = "income_breakdown"
+        else:
+            data = sheets.get_section_breakdown(section, month)
+    elif query_type == "yearly_average":
+        data = sheets.get_yearly_average(month)
     elif query_type == "top_categories":
         data = sheets.get_top_categories(month)
     elif query_type == "last_transactions":
@@ -412,6 +424,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     if status == "SUCCESS":
+        if not resultado:
+            # Gemini decidió que no había nada que registrar (ej. un
+            # movimiento ignorable). No es un fallo técnico — distinto del
+            # caso "se intentó registrar y falló al escribir en Sheets" de
+            # más abajo, así que el mensaje debe dejarlo claro.
+            await update.message.reply_text(
+                "🤔 No he detectado ningún movimiento que deba registrarse en tu "
+                "mensaje. Si querías registrar un gasto o ingreso, intenta ser "
+                "más específico (ej. <i>'Nómina 2369,49€'</i>, <i>'Pagué 20€ en Mercadona'</i>).",
+                parse_mode=ParseMode.HTML,
+            )
+            return
+
         final_response = "🛡️ <b>Registro de Sentinel</b>\n\n"
         registrados = 0
         fallidos = 0

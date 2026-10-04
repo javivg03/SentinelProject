@@ -31,6 +31,30 @@ def test_brain_success(mock_client_cls):
 
 
 @patch("google.genai.Client")
+def test_brain_retries_on_malformed_json(mock_client_cls):
+    """
+    Gemini puede devolver un 200 OK con JSON ocasionalmente mal formado
+    (glitch de generación, ej. con varios movimientos en un mensaje). Antes
+    el parseo ocurría fuera del bloque con reintentos y el fallo se
+    propagaba directo; ahora debe reintentar y recuperarse si el segundo
+    intento sí es válido.
+    """
+    mock_instance = MagicMock()
+    mock_client_cls.return_value = mock_instance
+    mock_instance.models.generate_content.side_effect = [
+        MockResponse('{"movimientos": [{"concepto": "Gimnasio",'),  # JSON roto
+        MockResponse('{"movimientos": [{"concepto": "Gimnasio", "categoria": "Gimnasio", "importe": 42.9}]}'),
+    ]
+
+    brain = SentinelBrain()
+    res, status = brain.process_transaction("Gimnasio 42.9")
+
+    assert status == "SUCCESS"
+    assert res[0]["concepto"] == "Gimnasio"
+    assert mock_instance.models.generate_content.call_count == 2
+
+
+@patch("google.genai.Client")
 def test_classify_intent_returns_error_when_gemini_fails_and_ambiguous(mock_client_cls):
     """
     Si Gemini falla (ej. cuota agotada) y el mensaje no encaja con ninguna
@@ -244,5 +268,94 @@ def test_format_query_reports_read_failure_distinctly_from_zero(mock_client_cls)
 
     formatted = brain.format_query_response("monthly_summary", {"error": "API caída"})
     assert "No pude leer tus datos" in formatted
+
+
+@patch("google.genai.Client")
+def test_format_monthly_expenses_shows_only_expense_total(mock_client_cls):
+    """'Cuánto he gastado este mes' debe centrarse en el gasto, no dar el balance completo."""
+    mock_client_cls.return_value = MagicMock()
+    brain = SentinelBrain()
+
+    data = {
+        "month_name": "Septiembre",
+        "total_ingresos": 2369.49,
+        "total_gastos_vitales": 811.57,
+        "total_gastos_ocio": 693.68,
+        "total_gastos": 1505.25,
+        "ahorro_neto": 704.24,
+        "tasa_ahorro": 29.7,
+    }
+    formatted = brain.format_query_response("monthly_expenses", data)
+
+    assert "1.505,25€" in formatted
+    assert "811,57€" in formatted
+    assert "693,68€" in formatted
+    # No debe mezclar el balance completo (ingresos/ahorro) en esta respuesta centrada en gasto
+    assert "Ingresos" not in formatted
+    assert "Ahorro" not in formatted
+
+
+@patch("google.genai.Client")
+def test_format_section_breakdown_with_expenses(mock_client_cls):
+    mock_client_cls.return_value = MagicMock()
+    brain = SentinelBrain()
+
+    data = {
+        "month_name": "Septiembre",
+        "section_name": "Gastos Vitales",
+        "items": [
+            {"categoria": "Alquiler", "total": 500.0},
+            {"categoria": "Supermercado", "total": 120.5},
+            {"categoria": "Gimnasio", "total": 0.0},
+        ],
+        "total": 620.5,
+    }
+    formatted = brain.format_query_response("section_breakdown", data)
+
+    assert "Alquiler" in formatted
+    assert "500,00€" in formatted
+    assert "Gimnasio" not in formatted  # categorías sin gasto no deben listarse
+    assert "620,50€" in formatted
+
+
+@patch("google.genai.Client")
+def test_format_section_breakdown_empty_section(mock_client_cls):
+    mock_client_cls.return_value = MagicMock()
+    brain = SentinelBrain()
+
+    data = {"month_name": "Octubre", "section_name": "Ocio y Extras", "items": [], "total": 0.0}
+    formatted = brain.format_query_response("section_breakdown", data)
+
+    assert "No hay gastos registrados" in formatted
+
+
+@patch("google.genai.Client")
+def test_format_yearly_average_with_data(mock_client_cls):
+    mock_client_cls.return_value = MagicMock()
+    brain = SentinelBrain()
+
+    data = {
+        "meses_computados": 2,
+        "media_ingresos": 3100.0,
+        "media_gastos": 1235.0,
+        "media_ahorro": 1865.0,
+    }
+    formatted = brain.format_query_response("yearly_average", data)
+
+    assert "3.100,00€" in formatted
+    assert "1.235,00€" in formatted
+    assert "1.865,00€" in formatted
+    assert "2 meses" in formatted
+
+
+@patch("google.genai.Client")
+def test_format_yearly_average_no_data_yet(mock_client_cls):
+    mock_client_cls.return_value = MagicMock()
+    brain = SentinelBrain()
+
+    data = {"meses_computados": 0, "media_ingresos": 0.0, "media_gastos": 0.0, "media_ahorro": 0.0}
+    formatted = brain.format_query_response("yearly_average", data)
+
+    assert "Todavía no hay suficientes meses" in formatted
 
 

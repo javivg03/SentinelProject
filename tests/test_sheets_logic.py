@@ -314,3 +314,126 @@ def test_delete_monthly_note_handles_exception_gracefully():
 
     assert result["success"] is False
     assert "error" in result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# get_section_breakdown — desglose de una sección (Vitales/Ocio/Inversión)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_col(values_by_row, length=45):
+    col = [""] * length
+    for row, val in values_by_row.items():
+        if row - 1 < length:
+            col[row - 1] = val
+    return col
+
+
+def test_get_section_breakdown_vitales():
+    sc = _make_connector()
+    col_b = _build_col({11: "Alquiler", 12: "Electricidad + Gas", 15: "Supermercado"})
+    col_data = _build_col({11: "500", 12: "80", 15: "120,50"})
+    sc.matrix_sheet.col_values.side_effect = lambda col: col_b if col == 2 else col_data
+
+    result = sc.get_section_breakdown("vitales", month=9)
+
+    assert result["section_name"] == "Gastos Vitales"
+    cats = {it["categoria"]: it["total"] for it in result["items"] if it["total"] > 0}
+    assert cats == {"Alquiler": 500.0, "Electricidad + Gas": 80.0, "Supermercado": 120.5}
+    assert result["total"] == 700.5
+
+
+def test_get_section_breakdown_unknown_section_reports_error():
+    sc = _make_connector()
+    result = sc.get_section_breakdown("inexistente")
+    assert "error" in result
+
+
+def test_get_section_breakdown_handles_exception_gracefully():
+    sc = _make_connector()
+    sc.matrix_sheet.col_values.side_effect = RuntimeError("fallo de red")
+    result = sc.get_section_breakdown("vitales")
+    assert "error" in result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# get_yearly_average — promedio de ingresos/gastos en lo que va de año
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_row(values_by_col, length=15):
+    row = [""] * length
+    for col, val in values_by_col.items():
+        if col - 1 < length:
+            row[col - 1] = val
+    return row
+
+
+def test_get_yearly_average_uses_only_months_with_income():
+    sc = _make_connector()
+    row_ingresos = _build_row({3: "3000", 4: "3200"})  # Enero=col3, Febrero=col4
+    row_vitales = _build_row({3: "800", 4: "850"})
+    row_ocio = _build_row({3: "400", 4: "420"})
+
+    def row_values_side_effect(row_idx):
+        if row_idx == sc.ROW_TOTAL_INGRESOS:
+            return row_ingresos
+        if row_idx == sc.ROW_TOTAL_VITALES:
+            return row_vitales
+        if row_idx == sc.ROW_TOTAL_OCIO:
+            return row_ocio
+        return []
+
+    sc.matrix_sheet.row_values.side_effect = row_values_side_effect
+
+    result = sc.get_yearly_average(upto_month=9)
+
+    assert result["meses_computados"] == 2
+    assert result["media_ingresos"] == 3100.0
+    assert result["media_gastos"] == 1235.0
+    assert result["media_ahorro"] == 1865.0
+
+
+def test_get_yearly_average_no_months_with_data():
+    sc = _make_connector()
+    sc.matrix_sheet.row_values.return_value = []
+
+    result = sc.get_yearly_average(upto_month=9)
+
+    assert result["meses_computados"] == 0
+    assert result["media_ingresos"] == 0.0
+
+
+def test_get_yearly_average_handles_exception_gracefully():
+    sc = _make_connector()
+    sc.matrix_sheet.row_values.side_effect = RuntimeError("fallo de red")
+
+    result = sc.get_yearly_average(upto_month=9)
+    assert "error" in result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# get_monthly_summary — regresión: la tasa de ahorro no debe multiplicarse x100
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_get_monthly_summary_tasa_ahorro_not_double_scaled():
+    """
+    La celda de Sheets ya viene formateada como porcentaje (ej. "29,3%" ->
+    _clean_value la deja en 29.3). Multiplicarla otra vez por 100 daba
+    tasas absurdas como 2930%.
+    """
+    sc = _make_connector()
+    col_data = _build_col(
+        {
+            sc.ROW_TOTAL_INGRESOS: "2369,49",
+            sc.ROW_TOTAL_VITALES: "811,57",
+            sc.ROW_TOTAL_OCIO: "702,58",
+            sc.ROW_TOTAL_INVERSION: "160",
+            sc.ROW_AHORRO_NETO: "695,34",
+            sc.ROW_TASA_AHORRO: "29,3%",
+        },
+        length=60,
+    )
+    sc.matrix_sheet.col_values.return_value = col_data
+
+    result = sc.get_monthly_summary(month=9)
+
+    assert result["tasa_ahorro"] == 29.3

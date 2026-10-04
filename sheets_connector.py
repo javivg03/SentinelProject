@@ -67,6 +67,15 @@ class SheetsConnector:
     ROW_PATRIMONIO_UNICAJA = 57
     ROW_PATRIMONIO_TOTAL = 58
 
+    # Filas de categorías por sección, para desglosar Vitales/Ocio/Inversión
+    # (distinto de get_top_categories, que mezcla todas las categorías de
+    # gasto juntas para un ranking global).
+    SECTION_ROWS = {
+        "vitales": (range(11, 20), "Gastos Vitales"),
+        "ocio": (range(23, 38), "Ocio y Extras"),
+        "inversion": (range(41, 43), "Inversión y Ahorro"),
+    }
+
     def __init__(self):
         try:
             # ── 1. Autenticación dual (local vs nube) ──────────────────────
@@ -639,7 +648,11 @@ class SheetsConnector:
             total_ocio = safe_get(self.ROW_TOTAL_OCIO)
             total_inversion = safe_get(self.ROW_TOTAL_INVERSION)
             ahorro_neto = safe_get(self.ROW_AHORRO_NETO)
-            tasa_ahorro = safe_get(self.ROW_TASA_AHORRO) * 100
+            # La celda ya viene formateada como porcentaje por Sheets (ej. "29,3%"
+            # -> _clean_value la deja en 29.3), así que NO hay que volver a
+            # multiplicar por 100 — eso duplicaba la escala y daba tasas
+            # absurdas como "2930%".
+            tasa_ahorro = safe_get(self.ROW_TASA_AHORRO)
 
             # Si tasa de ahorro es 0 y hay ingresos, calcularla directamente
             if tasa_ahorro == 0.0 and total_ingresos > 0:
@@ -788,6 +801,93 @@ class SheetsConnector:
         except Exception as e:
             print(f"❌ Error en get_top_categories: {e}")
             return None
+
+    def get_section_breakdown(self, section: str, month: int = None) -> dict:
+        """
+        Desglose por categoría de una sección completa (Vitales/Ocio/
+        Inversión) para el mes indicado — ej. "desglosa los gastos
+        vitales". Devuelve TODAS las categorías de la sección (incluidas
+        las de 0€), ordenadas de mayor a menor gasto.
+        """
+        try:
+            section = (section or "").strip().lower()
+            if section not in self.SECTION_ROWS:
+                return {"error": f"Sección desconocida: '{section}'"}
+
+            rows, section_name = self.SECTION_ROWS[section]
+            month = month or datetime.datetime.now().month
+            month_col = self.month_columns.get(month, month + 2)
+            month_name = self.MONTH_NAMES[month - 1]
+
+            col_b = self.matrix_sheet.col_values(2)
+            col_data = self.matrix_sheet.col_values(month_col)
+
+            items = []
+            total = 0.0
+            for r in rows:
+                idx = r - 1
+                cat = col_b[idx] if idx < len(col_b) else ""
+                val = self._clean_value(col_data[idx]) if idx < len(col_data) else 0.0
+                if cat:
+                    items.append({"categoria": cat.strip(), "total": val})
+                    total += val
+
+            items.sort(key=lambda x: x["total"], reverse=True)
+            return {
+                "month": month,
+                "month_name": month_name,
+                "section_name": section_name,
+                "items": items,
+                "total": round(total, 2),
+            }
+        except Exception as e:
+            print(f"❌ Error en get_section_breakdown: {e}")
+            return {"error": str(e)}
+
+    def get_yearly_average(self, upto_month: int = None) -> dict:
+        """
+        Promedio mensual de ingresos y gastos desde enero hasta el mes
+        indicado (por defecto el actual), usando SOLO los meses que ya
+        tienen ingresos registrados — así un mes futuro vacío (ej. octubre
+        sin datos aún) no diluye la media con ceros.
+        """
+        try:
+            upto_month = upto_month or datetime.datetime.now().month
+            row_ingresos = self.matrix_sheet.row_values(self.ROW_TOTAL_INGRESOS)
+            row_vitales = self.matrix_sheet.row_values(self.ROW_TOTAL_VITALES)
+            row_ocio = self.matrix_sheet.row_values(self.ROW_TOTAL_OCIO)
+
+            def val_at(row_values, col_idx):
+                return self._clean_value(row_values[col_idx - 1]) if col_idx - 1 < len(row_values) else 0.0
+
+            meses_con_datos = 0
+            total_ingresos = 0.0
+            total_gastos = 0.0
+
+            for m in range(1, upto_month + 1):
+                col_idx = self.month_columns.get(m, m + 2)
+                ingreso_m = val_at(row_ingresos, col_idx)
+                if ingreso_m <= 0:
+                    continue  # mes sin datos reales todavía
+
+                meses_con_datos += 1
+                total_ingresos += ingreso_m
+                total_gastos += val_at(row_vitales, col_idx) + val_at(row_ocio, col_idx)
+
+            if meses_con_datos == 0:
+                return {"meses_computados": 0, "media_ingresos": 0.0, "media_gastos": 0.0, "media_ahorro": 0.0}
+
+            media_ingresos = round(total_ingresos / meses_con_datos, 2)
+            media_gastos = round(total_gastos / meses_con_datos, 2)
+            return {
+                "meses_computados": meses_con_datos,
+                "media_ingresos": media_ingresos,
+                "media_gastos": media_gastos,
+                "media_ahorro": round(media_ingresos - media_gastos, 2),
+            }
+        except Exception as e:
+            print(f"❌ Error en get_yearly_average: {e}")
+            return {"error": str(e)}
 
     def get_monthly_notes(self, month: int = None) -> dict:
         """

@@ -53,19 +53,23 @@ class SentinelBrain:
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True,
     )
-    def _call_api(self, prompt: str) -> object:
+    def _call_api(self, prompt: str) -> dict:
         """
-        Llama a la API de Gemini con reintentos automáticos (backoff exponencial).
-        Máximo 3 intentos: espera 2s, 4s, 8s entre reintentos.
-        Fuerza la respuesta en formato JSON estricto.
+        Llama a la API de Gemini y parsea el JSON, con reintentos automáticos
+        (backoff exponencial). Máximo 3 intentos: espera 2s, 4s, 8s entre
+        reintentos. El parseo ocurre DENTRO del bloque reintentado a
+        propósito: Gemini puede devolver un 200 OK con un JSON ocasionalmente
+        mal formado (glitch de generación), y sin esto ese fallo nunca se
+        reintentaba — se propagaba directo como error al usuario.
         """
-        return self.client.models.generate_content(
+        response = self.client.models.generate_content(
             model=self.model_name,
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
             ),
         )
+        return json.loads(response.text)
 
     # ─────────────────────────────────────────────────────────────────────────
     # CLASIFICADOR DE INTENCIÓN — Enrutador principal
@@ -126,8 +130,7 @@ class SentinelBrain:
             instructions = self._inject_date(instructions)
             hist_str = f"--- HISTORIAL DE CONVERSACIÓN RECIENTE ---\n{history}\n\n" if history else ""
             prompt = f"{instructions}\n\n{hist_str}--- MENSAJE DEL USUARIO ---\n{user_message}"
-            response = self._call_api(prompt)
-            data = json.loads(response.text)
+            data = self._call_api(prompt)
 
             if isinstance(data, dict):
                 return data
@@ -190,8 +193,7 @@ class SentinelBrain:
                 f"--- ACTUAL ---\n{current_input}"
             )
 
-            response = self._call_api(full_prompt)
-            data = json.loads(response.text)
+            data = self._call_api(full_prompt)
 
             if data.get("duda"):
                 return data["duda"], "DOUBT"
@@ -220,8 +222,7 @@ class SentinelBrain:
             )
 
             print(f"🧠 Enviando a Gemini documento de {len(raw_text)} caracteres...")
-            response = self._call_api(prompt)
-            data = json.loads(response.text)
+            data = self._call_api(prompt)
 
             return data.get("movimientos", []), "SUCCESS"
 
@@ -310,8 +311,8 @@ class SentinelBrain:
             return resp
 
 
-        # ── 3. Balance mensual, ahorro o ingresos ─────────────────────────
-        elif query_type in ("monthly_summary", "monthly_savings", "monthly_income"):
+        # ── 3. Balance mensual, ahorro, ingresos o gasto total ────────────
+        elif query_type in ("monthly_summary", "monthly_savings", "monthly_income", "monthly_expenses"):
             m_name = data.get("month_name", "Mes actual")
             ingresos = data.get("total_ingresos", 0.0)
             vitales = data.get("total_gastos_vitales", 0.0)
@@ -319,9 +320,16 @@ class SentinelBrain:
             inversion = data.get("total_inversion", 0.0)
             ahorro = data.get("ahorro_neto", 0.0)
             tasa = data.get("tasa_ahorro", 0.0)
+            total_gastos = data.get("total_gastos", round(vitales + ocio, 2))
 
             if query_type == "monthly_income":
                 return f"💵 <b>Ingresos totales ({m_name}):</b> <code>{self._format_euro(ingresos)}</code>"
+
+            if query_type == "monthly_expenses":
+                return (
+                    f"📉 <b>Gasto Total ({m_name}):</b> <code>{self._format_euro(total_gastos)}</code>\n"
+                    f"🏠 Vitales: {self._format_euro(vitales)}  |  ☕ Ocio: {self._format_euro(ocio)}"
+                )
 
             if query_type == "monthly_savings":
                 sign = "+" if ahorro >= 0 else ""
@@ -423,6 +431,41 @@ class SentinelBrain:
                 return header + f"\n\n📝 No quedan más notas para {m_name}."
             else:
                 return f"❌ <b>No pude borrar la nota:</b> <code>{data.get('error', 'Desconocido')}</code>"
+
+        # ── 10. Desglose de una sección (Vitales / Ocio / Inversión) ─────
+        elif query_type == "section_breakdown":
+            section_name = data.get("section_name", "esta sección")
+            m_name = data.get("month_name", "Mes actual")
+            items = data.get("items", [])
+            total = data.get("total", 0.0)
+
+            con_gasto = [it for it in items if it["total"] > 0]
+            if not con_gasto:
+                return f"ℹ️ No hay gastos registrados en {section_name} para {m_name}."
+
+            lines = [f"📊 <b>Desglose de {section_name} — {m_name}</b>\n"]
+            for it in con_gasto:
+                lines.append(f"• <b>{it['categoria']}:</b> {self._format_euro(it['total'])}")
+            lines.append(f"\n💰 <b>Total {section_name}:</b> <code>{self._format_euro(total)}</code>")
+            return "\n".join(lines)
+
+        # ── 11. Promedio de ingresos/gastos en lo que va de año ───────────
+        elif query_type == "yearly_average":
+            n = data.get("meses_computados", 0)
+            if n == 0:
+                return "ℹ️ Todavía no hay suficientes meses con datos para calcular una media."
+
+            ingresos = data.get("media_ingresos", 0.0)
+            gastos = data.get("media_gastos", 0.0)
+            ahorro = data.get("media_ahorro", 0.0)
+            sign = "+" if ahorro >= 0 else ""
+            icon = "💚" if ahorro >= 0 else "🔴"
+            return (
+                f"📊 <b>Promedio mensual</b> <i>(sobre {n} mes{'es' if n != 1 else ''} con datos)</i>\n\n"
+                f"• 💵 Ingresos medios: {self._format_euro(ingresos)}\n"
+                f"• 📉 Gastos medios: {self._format_euro(gastos)}\n"
+                f"{icon} <b>Ahorro medio:</b> <code>{sign}{self._format_euro(ahorro)}</code>"
+            )
 
         return "📊 Consulta procesada correctamente."
 

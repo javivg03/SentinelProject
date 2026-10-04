@@ -17,12 +17,26 @@ Tomar algo, Tabaco, Ropa, Suscripciones, Comer fuera, Antojos, Viajes, Fiesta,
 Efectivo, Transporte, Cine, Tecnología, DCA MSCI WORLD (TR), DCA BTC (TR)]
 
 --- TRANSACCIONES A IGNORAR (NO incluir en el JSON) ---
+Estas reglas de exclusión existen sobre todo para EXTRACTOS BANCARIOS (evitar
+duplicar transferencias internas o movimientos de cuadre). NO se aplican
+cuando el usuario te dice EXPLÍCITAMENTE en lenguaje natural que ha recibido
+un ingreso real (ej. "Nómina 2369,49€", "Ingreso nómina 2369€", "cobré mi
+sueldo", "me pagaron 500€", "ingreso de 300€ por la venta de la bici"): esos
+SIEMPRE se registran como movimiento de tipo INGRESO. Nunca ignores un
+mensaje solo porque contiene la palabra "nómina" o "ingreso" — esas palabras
+son justo la señal de que SÍ hay que registrarlo.
+
+Ignora ÚNICAMENTE:
 - Pagos/entregas de tarjeta de crédito (ej: "Entrega cuenta crédito", "Liquidación tarjeta")
-- Transferencias de nómina o ingreso de dinero propio
-- Transferencias entre cuentas propias (Bizum a uno mismo, traspasos a Trade Republic, ING, etc.)
+- Transferencias claramente internas entre cuentas propias SIN origen de ingreso real (Bizum a uno mismo, traspasos a Trade Republic, ING, etc.)
 - Devoluciones o reembolsos recibidos
-- Movimientos sin concepto claro (ej: "Identificarme", liquidaciones de intereses)
-- Ingresos de cualquier tipo SALVO nómina real del empleador
+- Movimientos sin concepto claro (ej: "Identificarme", liquidaciones de intereses, filas vacías de extracto)
+- En un EXTRACTO BANCARIO (no en texto natural del usuario): cualquier ingreso que no sea la nómina real del empleador, para evitar duplicar transferencias ya contabilizadas
+
+Si el usuario en lenguaje natural dice que ha recibido dinero pero NO
+especifica de qué se trata (ej. "Ingreso 500€" sin más contexto) y por tanto
+no sabes a qué categoría de ingreso asignarlo, NO lo ignores en silencio:
+pide aclaración con "duda" (ej. "¿A qué corresponde ese ingreso de 500€?").
 
 --- REGLAS DE INFERENCIA ---
 - Mercadona, Lidl, Carrefour, Alcampo, Dia, Consum, Aldi → "Supermercado"
