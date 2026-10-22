@@ -88,7 +88,7 @@ class SentinelBrain:
             "cuánto", "cuanto", "qué", "que", "cuál", "cual",
             "cuáles", "cuales", "cómo", "como", "dónde", "cuándo", "cuando",
             "muestra", "dame", "dime", "enseñame", "lista", "busca",
-            "resumen", "presupuesto", "balance", "informe",
+            "resumen", "presupuesto", "balance", "informe", "desglose", "desglosa",
             "patrimonio", "ahorro", "nota", "notas", "apunta", "borra", "elimina",
         )
         if any(t.startswith(w) for w in QUERY_STARTERS):
@@ -145,6 +145,12 @@ class SentinelBrain:
                     return {"intent": "query", "query_type": "patrimony"}
                 if "desglos" in msg_lower and "ingres" in msg_lower:
                     return {"intent": "query", "query_type": "income_breakdown"}
+                if "desglos" in msg_lower and ("gasto" in msg_lower or "ocio" in msg_lower or "vital" in msg_lower or "todo" in msg_lower):
+                    if "vital" in msg_lower and "ocio" not in msg_lower and "todo" not in msg_lower:
+                        return {"intent": "query", "query_type": "section_breakdown", "section": "vitales"}
+                    if "ocio" in msg_lower and "vital" not in msg_lower and "todo" not in msg_lower:
+                        return {"intent": "query", "query_type": "section_breakdown", "section": "ocio"}
+                    return {"intent": "query", "query_type": "expenses_breakdown"}
                 if "ahorro" in msg_lower:
                     return {"intent": "query", "query_type": "monthly_savings"}
                 if "nomina" in msg_lower or "nómina" in msg_lower:
@@ -432,7 +438,41 @@ class SentinelBrain:
             else:
                 return f"❌ <b>No pude borrar la nota:</b> <code>{data.get('error', 'Desconocido')}</code>"
 
-        # ── 10. Desglose de una sección (Vitales / Ocio / Inversión) ─────
+        # ── 10. Desglose Completo de Gastos (Vitales + Ocio) ─────────────
+        elif query_type == "expenses_breakdown":
+            m_name = data.get("month_name", "Mes actual")
+            vitales = data.get("vitales", {})
+            ocio = data.get("ocio", {})
+            total_gastos = data.get("total_gastos", 0.0)
+
+            vit_items = [it for it in vitales.get("items", []) if it["total"] > 0]
+            ocio_items = [it for it in ocio.get("items", []) if it["total"] > 0]
+
+            if not vit_items and not ocio_items:
+                return f"ℹ️ No hay gastos registrados para {m_name}."
+
+            lines = [f"📊 <b>Desglose de Gastos — {m_name}</b>\n"]
+
+            lines.append("🏠 <b>Gastos Vitales:</b>")
+            if vit_items:
+                for it in vit_items:
+                    lines.append(f"  • {it['categoria']}: {self._format_euro(it['total'])}")
+                lines.append(f"  <i>Subtotal Vitales: {self._format_euro(vitales.get('total', 0.0))}</i>\n")
+            else:
+                lines.append("  <i>Sin gastos vitales registrados</i>\n")
+
+            lines.append("☕ <b>Ocio y Extras:</b>")
+            if ocio_items:
+                for it in ocio_items:
+                    lines.append(f"  • {it['categoria']}: {self._format_euro(it['total'])}")
+                lines.append(f"  <i>Subtotal Ocio: {self._format_euro(ocio.get('total', 0.0))}</i>\n")
+            else:
+                lines.append("  <i>Sin gastos de ocio registrados</i>\n")
+
+            lines.append(f"📉 <b>Total Gastos:</b> <code>{self._format_euro(total_gastos)}</code>")
+            return "\n".join(lines)
+
+        # ── 11. Desglose de una sección (Vitales / Ocio / Inversión) ─────
         elif query_type == "section_breakdown":
             section_name = data.get("section_name", "esta sección")
             m_name = data.get("month_name", "Mes actual")

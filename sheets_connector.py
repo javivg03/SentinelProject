@@ -794,8 +794,8 @@ class SheetsConnector:
             col_data = self.matrix_sheet.col_values(month_col)
 
             gastos = []
-            # Categorías de gasto: filas 11 a 19 (Vitales) y 23 a 37 (Ocio)
-            expense_rows = list(range(11, 20)) + list(range(23, 38))
+            # Categorías de gasto: Vitales y Ocio (definidas dinámicamente en SECTION_ROWS)
+            expense_rows = list(self.SECTION_ROWS["vitales"][0]) + list(self.SECTION_ROWS["ocio"][0])
             for r in expense_rows:
                 idx = r - 1
                 cat = col_b[idx] if idx < len(col_b) else ""
@@ -849,6 +849,57 @@ class SheetsConnector:
             }
         except Exception as e:
             print(f"❌ Error en get_section_breakdown: {e}")
+            return {"error": str(e)}
+
+    def get_expenses_breakdown(self, month: int = None) -> dict:
+        """
+        Desglose completo de gastos (Vitales + Ocio) para el mes indicado.
+        Devuelve las categorías de cada sección, subtotales y total general de gastos.
+        """
+        try:
+            month = month or datetime.datetime.now().month
+            month_col = self.month_columns.get(month, month + 2)
+            month_name = self.MONTH_NAMES[month - 1]
+
+            col_b = self.matrix_sheet.col_values(2)
+            col_data = self.matrix_sheet.col_values(month_col)
+
+            def _get_items(rows):
+                items = []
+                subtotal = 0.0
+                for r in rows:
+                    idx = r - 1
+                    cat = col_b[idx] if idx < len(col_b) else ""
+                    val = self._clean_value(col_data[idx]) if idx < len(col_data) else 0.0
+                    if cat:
+                        items.append({"categoria": cat.strip(), "total": val})
+                        subtotal += val
+                items.sort(key=lambda x: x["total"], reverse=True)
+                return items, round(subtotal, 2)
+
+            vit_rows, vit_name = self.SECTION_ROWS["vitales"]
+            ocio_rows, ocio_name = self.SECTION_ROWS["ocio"]
+
+            vit_items, vit_total = _get_items(vit_rows)
+            ocio_items, ocio_total = _get_items(ocio_rows)
+
+            return {
+                "month": month,
+                "month_name": month_name,
+                "vitales": {
+                    "section_name": vit_name,
+                    "items": vit_items,
+                    "total": vit_total,
+                },
+                "ocio": {
+                    "section_name": ocio_name,
+                    "items": ocio_items,
+                    "total": ocio_total,
+                },
+                "total_gastos": round(vit_total + ocio_total, 2),
+            }
+        except Exception as e:
+            print(f"❌ Error en get_expenses_breakdown: {e}")
             return {"error": str(e)}
 
     def get_yearly_average(self, upto_month: int = None) -> dict:

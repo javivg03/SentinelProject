@@ -356,6 +356,41 @@ def test_get_section_breakdown_handles_exception_gracefully():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# get_expenses_breakdown — desglose completo de gastos (Vitales + Ocio)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_get_expenses_breakdown():
+    sc = _make_connector()
+    col_b = _build_col({11: "Alquiler", 15: "Supermercado", 22: "Comer fuera", 25: "Viajes"})
+    col_data = _build_col({11: "325", 15: "100", 22: "50", 25: "170"})
+    sc.matrix_sheet.col_values.side_effect = lambda col: col_b if col == 2 else col_data
+
+    result = sc.get_expenses_breakdown(month=10)
+
+    assert result["month"] == 10
+    assert result["vitales"]["total"] == 425.0
+    assert result["ocio"]["total"] == 220.0
+    assert result["total_gastos"] == 645.0
+    vit_non_zero = [it for it in result["vitales"]["items"] if it["total"] > 0]
+    assert len(vit_non_zero) == 2
+    ocio_non_zero = [it for it in result["ocio"]["items"] if it["total"] > 0]
+    assert len(ocio_non_zero) == 2
+
+
+def test_get_top_categories_uses_correct_rows():
+    sc = _make_connector()
+    col_b = _build_col({11: "Alquiler", 19: "Total Vitales", 22: "Comer fuera"})
+    col_data = _build_col({11: "300", 19: "9999", 22: "150"})
+    sc.matrix_sheet.col_values.side_effect = lambda col: col_b if col == 2 else col_data
+
+    result = sc.get_top_categories(month=10, limit=5)
+    cats = [it["categoria"] for it in result]
+    assert "Alquiler" in cats
+    assert "Comer fuera" in cats
+    assert "Total Vitales" not in cats
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # get_yearly_average — promedio de ingresos/gastos en lo que va de año
 # ─────────────────────────────────────────────────────────────────────────────
 

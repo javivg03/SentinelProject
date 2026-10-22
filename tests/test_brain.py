@@ -359,3 +359,43 @@ def test_format_yearly_average_no_data_yet(mock_client_cls):
     assert "Todavía no hay suficientes meses" in formatted
 
 
+@patch("google.genai.Client")
+def test_format_expenses_breakdown(mock_client_cls):
+    mock_client_cls.return_value = MagicMock()
+    brain = SentinelBrain()
+
+    data = {
+        "month_name": "Octubre",
+        "vitales": {
+            "section_name": "Gastos Vitales",
+            "items": [
+                {"categoria": "Alquiler", "total": 325.0},
+                {"categoria": "Farmacia / Salud", "total": 64.76},
+            ],
+            "total": 389.76,
+        },
+        "ocio": {
+            "section_name": "Ocio y Extras",
+            "items": [
+                {"categoria": "Viajes", "total": 170.0},
+                {"categoria": "Fiesta", "total": 75.15},
+                {"categoria": "Clases particulares", "total": 70.0},
+            ],
+            "total": 315.15,
+        },
+        "total_gastos": 704.91,
+    }
+    formatted = brain.format_query_response("expenses_breakdown", data)
+
+    assert "Desglose de Gastos — Octubre" in formatted
+    assert "Gastos Vitales:" in formatted
+    assert "Alquiler: 325,00€" in formatted
+    assert "Subtotal Vitales: 389,76€" in formatted
+    assert "Ocio y Extras:" in formatted
+    assert "Viajes: 170,00€" in formatted
+    assert "Subtotal Ocio: 315,15€" in formatted
+    assert "Total Gastos:" in formatted
+    assert "704,91€" in formatted
+
+
+

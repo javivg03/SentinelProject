@@ -203,6 +203,16 @@ async def handle_financial_question(
     elif query_type == "income_breakdown" or ("desglos" in user_question.lower() and "ingres" in user_question.lower()):
         data = sheets.get_income_breakdown(month)
         query_type = "income_breakdown"
+    elif query_type == "expenses_breakdown" or (
+        "desglos" in user_question.lower()
+        and (
+            "gasto" in user_question.lower()
+            or ("vital" in user_question.lower() and "ocio" in user_question.lower())
+            or "todo" in user_question.lower()
+        )
+    ):
+        data = sheets.get_expenses_breakdown(month)
+        query_type = "expenses_breakdown"
     elif query_type == "patrimony":
         data = sheets.get_patrimony()
     elif query_type == "monthly_expenses":
@@ -211,7 +221,10 @@ async def handle_financial_question(
         data = sheets.get_monthly_summary(month)
     elif query_type == "section_breakdown":
         section = (section or "").strip().lower()
-        if section == "ingresos":
+        if section in ("todos", "gastos", "vitales y ocio", "vitales_ocio", "all"):
+            data = sheets.get_expenses_breakdown(month)
+            query_type = "expenses_breakdown"
+        elif section == "ingresos":
             data = sheets.get_income_breakdown(month)
             query_type = "income_breakdown"
         else:
