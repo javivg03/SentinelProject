@@ -68,14 +68,14 @@ REVIEW_THRESHOLD = 5.0
 # Categorías disponibles para el teclado inline de revisión
 REVIEW_KEYBOARD_ROWS = [
     ["Supermercado", "Comer fuera", "Desayuno"],
-    ["Antojos", "Ropa", "Tecnología"],
+    ["Antojos", "Ropa", "Clases particulares"],
     ["Alcohol", "Tabaco", "Fiesta"],
     ["Viajes", "Cine", "Transporte"],
     ["Gasolina", "Coche", "Gimnasio"],
     ["Farmacia", "Peluquero", "Efectivo"],
-    ["Alquiler", "Electricidad + Gas", "Regalos"],
+    ["Alquiler", "Facturas", "Regalos"],
     ["Nómina", "Suscripción Disney", "Otros"],
-    ["⏭️ Ignorar (no registrar)"],
+    ["Entrenador personal", "⏭️ Ignorar (no registrar)"],
 ]
 
 

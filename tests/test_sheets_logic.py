@@ -131,7 +131,7 @@ def test_log_expense_budget_alert_uses_canonical_name():
 
 
 def test_log_expense_handles_exception_gracefully():
-    sc = _make_connector(category_map={"otros": 32}, row_display={32: "Otros"})
+    sc = _make_connector(category_map={"otros": 31}, row_display={31: "Otros"})
     sc.matrix_sheet.cell.side_effect = RuntimeError("API caída")
 
     result = sc.log_expense("Compra rara", "Otros", "5")
@@ -170,7 +170,7 @@ def test_batch_log_expenses_aggregates_same_category_and_month():
 
 
 def test_batch_log_expenses_handles_exception_gracefully():
-    sc = _make_connector(category_map={"otros": 32}, row_display={32: "Otros"})
+    sc = _make_connector(category_map={"otros": 31}, row_display={31: "Otros"})
     sc.matrix_sheet.cell.side_effect = RuntimeError("fallo de red")
 
     total = sc.batch_log_expenses([{"concepto": "X", "categoria": "Otros", "importe": 5}])
@@ -330,7 +330,7 @@ def _build_col(values_by_row, length=45):
 
 def test_get_section_breakdown_vitales():
     sc = _make_connector()
-    col_b = _build_col({11: "Alquiler", 12: "Electricidad + Gas", 15: "Supermercado"})
+    col_b = _build_col({11: "Alquiler", 12: "Facturas", 15: "Supermercado"})
     col_data = _build_col({11: "500", 12: "80", 15: "120,50"})
     sc.matrix_sheet.col_values.side_effect = lambda col: col_b if col == 2 else col_data
 
@@ -338,7 +338,7 @@ def test_get_section_breakdown_vitales():
 
     assert result["section_name"] == "Gastos Vitales"
     cats = {it["categoria"]: it["total"] for it in result["items"] if it["total"] > 0}
-    assert cats == {"Alquiler": 500.0, "Electricidad + Gas": 80.0, "Supermercado": 120.5}
+    assert cats == {"Alquiler": 500.0, "Facturas": 80.0, "Supermercado": 120.5}
     assert result["total"] == 700.5
 
 

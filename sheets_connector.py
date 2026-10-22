@@ -54,7 +54,7 @@ class SheetsConnector:
 
     # Filas fijas del resumen en '📊 Registro Mensual' (1-indexed)
     ROW_TOTAL_INGRESOS = 8
-    ROW_TOTAL_VITALES = 20
+    ROW_TOTAL_VITALES = 19
     ROW_TOTAL_OCIO = 38
     ROW_TOTAL_INVERSION = 43
     ROW_AHORRO_NETO = 50
@@ -71,8 +71,8 @@ class SheetsConnector:
     # (distinto de get_top_categories, que mezcla todas las categorías de
     # gasto juntas para un ranking global).
     SECTION_ROWS = {
-        "vitales": (range(11, 20), "Gastos Vitales"),
-        "ocio": (range(23, 38), "Ocio y Extras"),
+        "vitales": (range(11, 19), "Gastos Vitales"),
+        "ocio": (range(22, 38), "Ocio y Extras"),
         "inversion": (range(41, 43), "Inversión y Ahorro"),
     }
 
@@ -231,6 +231,10 @@ class SheetsConnector:
                 "farmacia": "farmacia / salud",
                 "salud": "farmacia / salud",
                 "medicamentos": "farmacia / salud",
+                "electricidad + gas": "facturas",
+                "electricidad": "facturas",
+                "luz": "facturas",
+                "gas": "facturas",
                 "disney": "suscripciones",
                 "suscripcion disney": "suscripciones",
                 "netflix": "suscripciones",
@@ -249,6 +253,9 @@ class SheetsConnector:
                 "comida": "comer fuera",
                 "almuerzo": "comer fuera",
                 "clases": "clases particulares",
+                "entrenador": "entrenador personal",
+                "pt": "entrenador personal",
+                "personal trainer": "entrenador personal",
                 "msci world": "dca msci world (tr)",
                 "msci": "dca msci world (tr)",
                 "sp500": "dca msci world (tr)",
@@ -369,7 +376,7 @@ class SheetsConnector:
                 return row
 
         # Si no se encuentra, buscar fila 'Otros'
-        return self.category_map.get("otros", 32)
+        return self.category_map.get("otros", 31)
 
     def _canonical_category_name(self, category: str) -> str:
         """
